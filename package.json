@@ -1,0 +1,26 @@
+{
+  "name": "raspcontrol-v3",
+  "version": "3.0.0",
+  "description": "ESM Industries Next-Gen Raspberry Pi Hardware Controller",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "moment-timezone": "^0.5.45",
+    "ws": "^8.16.0"
+  },
+  "optionalDependencies": {
+    "i2c-bus": "^1.2.2",
+    "jsmodbus": "^4.0.0",
+    "onoff": "^6.0.1",
+    "serialport": "^12.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "private": true
+}

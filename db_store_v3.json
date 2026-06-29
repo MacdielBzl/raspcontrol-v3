@@ -1,0 +1,1474 @@
+{
+  "manifest": {
+    "gatewayId": "gateway-test",
+    "devices": [
+      {
+        "id": "650000000000000000000116",
+        "name": "Clima LeadPik",
+        "type": "hvac",
+        "category": "climate",
+        "pin": 17,
+        "compressorPin": 18,
+        "tempId": "1",
+        "setpoint": 21,
+        "esmM": "278",
+        "externalId": "hvac-unified-uuid",
+        "wait_to_turn_on": 15,
+        "power_on_wait": 3,
+        "manual_date": null,
+        "manual_on": true,
+        "schedules": [
+          {
+            "days": [
+              "1"
+            ],
+            "startTime": "09:00:00",
+            "endTime": "18:00:00",
+            "action": {
+              "on": true,
+              "setpoint": 23
+            }
+          },
+          {
+            "days": [
+              "2"
+            ],
+            "startTime": "09:00:00",
+            "endTime": "18:00:00",
+            "action": {
+              "on": true,
+              "setpoint": 23
+            }
+          },
+          {
+            "days": [
+              "3"
+            ],
+            "startTime": "09:00:00",
+            "endTime": "18:00:00",
+            "action": {
+              "on": true,
+              "setpoint": 23
+            }
+          },
+          {
+            "days": [
+              "4"
+            ],
+            "startTime": "09:00:00",
+            "endTime": "18:00:00",
+            "action": {
+              "on": true,
+              "setpoint": 23
+            }
+          },
+          {
+            "days": [
+              "5"
+            ],
+            "startTime": "09:00:00",
+            "endTime": "18:00:00",
+            "action": {
+              "on": true,
+              "setpoint": 23
+            }
+          }
+        ]
+      },
+      {
+        "id": "650000000000000000000118",
+        "name": "Clima ESM",
+        "type": "hvac",
+        "category": "climate",
+        "pin": 23,
+        "compressorPin": 24,
+        "tempId": "2",
+        "setpoint": 19,
+        "esmM": "280",
+        "externalId": "hvac-second-uuid",
+        "wait_to_turn_on": 15,
+        "power_on_wait": 3,
+        "manual_date": "2026-06-10 16:23:59",
+        "manual_on": true,
+        "schedules": []
+      }
+    ]
+  },
+  "deviceStates": {
+    "650000000000000000000116": {
+      "currentVal": 24.53,
+      "updatedAt": "2026-06-29T22:50:41.992Z",
+      "on": true,
+      "compressorOn": false,
+      "lastTurnedOff": "2026-06-10T18:44:49.234Z",
+      "lastActiveSetpoint": 23,
+      "sensorStatus": "OK",
+      "lastCompressorOff": 1782773431993
+    },
+    "650000000000000000000118": {
+      "currentVal": 24.56,
+      "updatedAt": "2026-06-29T22:50:41.993Z",
+      "on": false,
+      "compressorOn": false,
+      "lastActiveSetpoint": 19,
+      "sensorStatus": "OK",
+      "lastCompressorOff": 1782772731383
+    }
+  },
+  "schedules": [
+    {
+      "days": [
+        "1"
+      ],
+      "startTime": "09:00:00",
+      "endTime": "18:00:00",
+      "action": {
+        "on": true,
+        "setpoint": 23
+      },
+      "deviceId": "650000000000000000000116"
+    },
+    {
+      "days": [
+        "2"
+      ],
+      "startTime": "09:00:00",
+      "endTime": "18:00:00",
+      "action": {
+        "on": true,
+        "setpoint": 23
+      },
+      "deviceId": "650000000000000000000116"
+    },
+    {
+      "days": [
+        "3"
+      ],
+      "startTime": "09:00:00",
+      "endTime": "18:00:00",
+      "action": {
+        "on": true,
+        "setpoint": 23
+      },
+      "deviceId": "650000000000000000000116"
+    },
+    {
+      "days": [
+        "4"
+      ],
+      "startTime": "09:00:00",
+      "endTime": "18:00:00",
+      "action": {
+        "on": true,
+        "setpoint": 23
+      },
+      "deviceId": "650000000000000000000116"
+    },
+    {
+      "days": [
+        "5"
+      ],
+      "startTime": "09:00:00",
+      "endTime": "18:00:00",
+      "action": {
+        "on": true,
+        "setpoint": 23
+      },
+      "deviceId": "650000000000000000000116"
+    }
+  ],
+  "offlineTelemetry": [
+    {
+      "gatewayId": "demo-gateway",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-11T22:47:32.250Z",
+            "compressorOn": false,
+            "temperature": 24.11
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-11T22:47:32.253Z",
+            "compressorOn": false,
+            "temperature": 24.05
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 41.68
+        }
+      },
+      "timestamp": "2026-06-11T22:47:37.261Z",
+      "queuedAt": "2026-06-11T22:47:37.261Z"
+    },
+    {
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-11T23:09:06.654Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.27
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-11T23:09:06.649Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.26
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 46.86
+        }
+      },
+      "timestamp": "2026-06-11T23:09:11.659Z",
+      "queuedAt": "2026-06-11T23:09:11.659Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:38:51.380Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.24
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:38:51.383Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.87
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 46.34
+        }
+      },
+      "timestamp": "2026-06-29T22:38:56.391Z",
+      "queuedAt": "2026-06-29T22:38:56.391Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:39:11.405Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.11
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:39:11.408Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.67
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 49.42
+        }
+      },
+      "timestamp": "2026-06-29T22:39:21.388Z",
+      "queuedAt": "2026-06-29T22:39:21.388Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:39:41.426Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 25.95
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:39:41.424Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.29
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 44.06
+        }
+      },
+      "timestamp": "2026-06-29T22:39:51.402Z",
+      "queuedAt": "2026-06-29T22:39:51.403Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:40:11.457Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.3
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:40:11.454Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.64
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 47.83
+        }
+      },
+      "timestamp": "2026-06-29T22:40:21.406Z",
+      "queuedAt": "2026-06-29T22:40:21.406Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:40:41.473Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 23.47
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:40:41.474Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.49
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 42.32
+        }
+      },
+      "timestamp": "2026-06-29T22:40:51.417Z",
+      "queuedAt": "2026-06-29T22:40:51.417Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:41:11.507Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.48
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:41:11.508Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.68
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 41.52
+        }
+      },
+      "timestamp": "2026-06-29T22:41:21.421Z",
+      "queuedAt": "2026-06-29T22:41:21.421Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:41:41.533Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.12
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:41:41.531Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.73
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 40.62
+        }
+      },
+      "timestamp": "2026-06-29T22:41:51.424Z",
+      "queuedAt": "2026-06-29T22:41:51.424Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:42:11.537Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.88
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:42:11.538Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.7
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 42.7
+        }
+      },
+      "timestamp": "2026-06-29T22:42:21.434Z",
+      "queuedAt": "2026-06-29T22:42:21.434Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:42:41.558Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.08
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:42:41.559Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.66
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 49
+        }
+      },
+      "timestamp": "2026-06-29T22:42:51.444Z",
+      "queuedAt": "2026-06-29T22:42:51.444Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:43:11.591Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 21.64
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:43:11.593Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.43
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 42.91
+        }
+      },
+      "timestamp": "2026-06-29T22:43:21.448Z",
+      "queuedAt": "2026-06-29T22:43:21.448Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:43:41.619Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.43
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:43:41.620Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.93
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 49.36
+        }
+      },
+      "timestamp": "2026-06-29T22:43:51.460Z",
+      "queuedAt": "2026-06-29T22:43:51.460Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:44:11.658Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.79
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:44:11.659Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.2
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 42.42
+        }
+      },
+      "timestamp": "2026-06-29T22:44:21.461Z",
+      "queuedAt": "2026-06-29T22:44:21.461Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:44:41.694Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.37
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:44:41.692Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.42
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 46.79
+        }
+      },
+      "timestamp": "2026-06-29T22:44:51.475Z",
+      "queuedAt": "2026-06-29T22:44:51.475Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:45:11.722Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 21.66
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:45:11.723Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.89
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 45.63
+        }
+      },
+      "timestamp": "2026-06-29T22:45:21.489Z",
+      "queuedAt": "2026-06-29T22:45:21.489Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:45:41.747Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.79
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:45:41.748Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.17
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 42.38
+        }
+      },
+      "timestamp": "2026-06-29T22:45:51.492Z",
+      "queuedAt": "2026-06-29T22:45:51.492Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:46:11.773Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.91
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:46:11.771Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.16
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 48.15
+        }
+      },
+      "timestamp": "2026-06-29T22:46:21.492Z",
+      "queuedAt": "2026-06-29T22:46:21.492Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:46:41.796Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.66
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:46:41.797Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.55
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 48.75
+        }
+      },
+      "timestamp": "2026-06-29T22:46:51.493Z",
+      "queuedAt": "2026-06-29T22:46:51.493Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:47:11.813Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 24.8
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:47:11.812Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 24.56
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 44.23
+        }
+      },
+      "timestamp": "2026-06-29T22:47:21.507Z",
+      "queuedAt": "2026-06-29T22:47:21.507Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:47:41.831Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 21.39
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:47:41.832Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 21.25
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 44.88
+        }
+      },
+      "timestamp": "2026-06-29T22:47:51.517Z",
+      "queuedAt": "2026-06-29T22:47:51.517Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:48:11.876Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 20.74
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:48:11.874Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.07
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 43.14
+        }
+      },
+      "timestamp": "2026-06-29T22:48:21.526Z",
+      "queuedAt": "2026-06-29T22:48:21.526Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:48:41.909Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 23.31
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:48:41.907Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.4
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 47.06
+        }
+      },
+      "timestamp": "2026-06-29T22:48:51.538Z",
+      "queuedAt": "2026-06-29T22:48:51.538Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:49:11.928Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 21.96
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:49:11.929Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.9
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 41.44
+        }
+      },
+      "timestamp": "2026-06-29T22:49:21.540Z",
+      "queuedAt": "2026-06-29T22:49:21.540Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:49:41.940Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 25.05
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:49:41.941Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 22.36
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 40.27
+        }
+      },
+      "timestamp": "2026-06-29T22:49:51.553Z",
+      "queuedAt": "2026-06-29T22:49:51.554Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:50:11.965Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 23.55
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:50:11.966Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.25
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 43.44
+        }
+      },
+      "timestamp": "2026-06-29T22:50:21.565Z",
+      "queuedAt": "2026-06-29T22:50:21.565Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "650000000000000000000116",
+            "on": true,
+            "lastUpdated": "2026-06-29T22:50:41.992Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.42
+          },
+          {
+            "deviceId": "650000000000000000000118",
+            "on": false,
+            "lastUpdated": "2026-06-29T22:50:41.993Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 20.95
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [
+            {
+              "pin": 25,
+              "status": 1
+            },
+            {
+              "pin": 26,
+              "status": 0
+            },
+            {
+              "pin": 27,
+              "status": 1
+            }
+          ],
+          "cpuTemp": 45.73
+        }
+      },
+      "timestamp": "2026-06-29T22:50:51.580Z",
+      "queuedAt": "2026-06-29T22:50:51.580Z"
+    }
+  ]
+}
