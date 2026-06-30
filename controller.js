@@ -136,24 +136,30 @@ export const controller = {
           if (desiredOn) {
             targetFan = true; // El ventilador debe estar ENCENDIDO si la unidad HVAC está habilitada
 
-            if (activeSetpoint !== null && tempReadings[dev.id] !== undefined) {
-              const currentTemp = tempReadings[dev.id];
-              
-              // Histéresis del Termostato de Enfriamiento (ENCENDIDO si > setpoint + 0.5, APAGADO si < setpoint - 0.5)
-              if (currentTemp > (activeSetpoint + 0.5)) {
-                targetCompressor = true;
-              } else if (currentTemp < (activeSetpoint - 0.5)) {
-                targetCompressor = false;
+            if (dev.tempId && activeSetpoint !== null) {
+              if (tempReadings[dev.id] !== undefined) {
+                const currentTemp = tempReadings[dev.id];
+                
+                // Histéresis del Termostato de Enfriamiento (ENCENDIDO si > setpoint + 0.5, APAGADO si < setpoint - 0.5)
+                if (currentTemp > (activeSetpoint + 0.5)) {
+                  targetCompressor = true;
+                } else if (currentTemp < (activeSetpoint - 0.5)) {
+                  targetCompressor = false;
+                } else {
+                  // Banda muerta de histéresis: mantener estado actual del compresor
+                  targetCompressor = currentState.compressorOn || false;
+                }
+                logger.info(`[Termostato HVAC] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Compresor objetivo: ${targetCompressor ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.compressorOn ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
               } else {
-                // Banda muerta de histéresis: mantener estado actual del compresor
-                targetCompressor = currentState.compressorOn || false;
+                // Falló la lectura del sensor de temperatura, apagar el compresor por seguridad
+                logger.warn(`Fallo de seguridad: falta lectura de temperatura para HVAC ${dev.name}. Forzando apagado del compresor.`, 'CTRL');
+                db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado del compresor.');
+                targetCompressor = false;
               }
-              logger.info(`[Termostato HVAC] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Compresor objetivo: ${targetCompressor ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.compressorOn ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
-            } else if (activeSetpoint !== null) {
-              // Falló la lectura del sensor de temperatura, apagar el compresor por seguridad
-              logger.warn(`Fallo de seguridad: falta lectura de temperatura para HVAC ${dev.name}. Forzando apagado del compresor.`, 'CTRL');
-              db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado del compresor.');
-              targetCompressor = false;
+            } else {
+              // Si no tiene sensor de temperatura configurado o no hay setpoint activo,
+              // el compresor simplemente sigue el estado de encendido del HVAC.
+              targetCompressor = true;
             }
           } else {
             logger.info(`[Termostato HVAC] ${dev.name}: HVAC apagado/deshabilitado por control manual o fuera de calendario.`, 'CTRL');
@@ -168,37 +174,43 @@ export const controller = {
           // Relevador estándar único / Temporizador / Tomacorriente
           let targetOn = desiredOn;
 
-          if (desiredOn && activeSetpoint !== null && tempReadings[dev.id] !== undefined) {
-            const currentTemp = tempReadings[dev.id];
+          const isThermostat = dev.type === 'heater' || dev.type === 'compressor';
 
-            if (dev.type === 'heater') {
-              // Lógica de calefacción
-              if (currentTemp < (activeSetpoint - 0.5)) {
-                targetOn = true;
-              } else if (currentTemp > (activeSetpoint + 0.5)) {
-                targetOn = false;
+          if (isThermostat) {
+            if (desiredOn && activeSetpoint !== null) {
+              if (tempReadings[dev.id] !== undefined) {
+                const currentTemp = tempReadings[dev.id];
+
+                if (dev.type === 'heater') {
+                  // Lógica de calefacción
+                  if (currentTemp < (activeSetpoint - 0.5)) {
+                    targetOn = true;
+                  } else if (currentTemp > (activeSetpoint + 0.5)) {
+                    targetOn = false;
+                  } else {
+                    targetOn = currentState.on || false;
+                  }
+                  logger.info(`[Termostato Calefactor] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Calefactor objetivo: ${targetOn ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.on ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
+                } else if (dev.type === 'compressor') {
+                  // Lógica de enfriamiento
+                  if (currentTemp > (activeSetpoint + 0.5)) {
+                    targetOn = true;
+                  } else if (currentTemp < (activeSetpoint - 0.5)) {
+                    targetOn = false;
+                  } else {
+                    targetOn = currentState.on || false;
+                  }
+                  logger.info(`[Termostato Compresor] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Compresor objetivo: ${targetOn ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.on ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
+                }
               } else {
-                targetOn = currentState.on || false;
-              }
-              logger.info(`[Termostato Calefactor] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Calefactor objetivo: ${targetOn ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.on ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
-            } else if (dev.type === 'compressor') {
-              // Lógica de enfriamiento
-              if (currentTemp > (activeSetpoint + 0.5)) {
-                targetOn = true;
-              } else if (currentTemp < (activeSetpoint - 0.5)) {
+                // Falta lectura del sensor, forzar apagado por seguridad
+                logger.warn(`Fallo de seguridad: falta lectura de temperatura para ${dev.name}. Forzando apagado.`, 'CTRL');
+                db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado.');
                 targetOn = false;
-              } else {
-                targetOn = currentState.on || false;
               }
-              logger.info(`[Termostato Compresor] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Compresor objetivo: ${targetOn ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.on ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
+            } else if (!desiredOn && activeSetpoint !== null) {
+              logger.info(`[Termostato] ${dev.name}: Dispositivo apagado/deshabilitado por control manual o fuera de calendario.`, 'CTRL');
             }
-          } else if (desiredOn && activeSetpoint !== null && tempReadings[dev.id] === undefined) {
-            // Falta lectura del sensor, forzar apagado por seguridad
-            logger.warn(`Fallo de seguridad: falta lectura de temperatura para ${dev.name}. Forzando apagado.`, 'CTRL');
-            db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado.');
-            targetOn = false;
-          } else if (!desiredOn && activeSetpoint !== null) {
-            logger.info(`[Termostato] ${dev.name}: Dispositivo apagado/deshabilitado por control manual o fuera de calendario.`, 'CTRL');
           }
 
           targetStates[dev.id] = targetOn;
