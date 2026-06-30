@@ -4,7 +4,7 @@
  * Handles Modbus RTU communication with energy meters (UPM309, UEM1P5, MFM384, etc.)
  * over RS485 serial ports.
  */
-import glob from 'glob';
+import fs from 'fs';
 import logger from './logger.js';
 
 let Modbus = null;
@@ -246,7 +246,16 @@ async function getModbusClient() {
   }
   
   // Discover serial ports automatically
-  const ports = glob.sync('/dev/ttyUSB*').concat(glob.sync('/dev/ttyACM*')).sort();
+  let ports = [];
+  try {
+    ports = fs.readdirSync('/dev')
+      .filter(file => file.startsWith('ttyUSB') || file.startsWith('ttyACM'))
+      .map(file => `/dev/${file}`)
+      .sort();
+  } catch (err) {
+    logger.warn(`Error al leer el directorio /dev: ${err.message}`, 'ENERGY');
+  }
+  
   if (ports.length === 0) {
     logger.warn('No se encontraron puertos seriales (/dev/ttyUSB* o /dev/ttyACM*).', 'ENERGY');
     return { client: null, serialport: null, connected: false };
