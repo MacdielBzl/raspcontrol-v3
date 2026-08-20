@@ -380,33 +380,46 @@ export function readSelectorPins() {
 
     if (!readSuccess) {
       let level = null;
+      const execOpts = { encoding: 'utf-8', timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] };
+      
       try {
+        // 1. Try pinctrl (standard in Raspberry Pi OS Bookworm)
         try {
-          const stdout = execSync(`pinctrl lev ${pin}`, { encoding: 'utf-8', timeout: 1000 });
+          const stdout = execSync(`pinctrl lev ${pin}`, execOpts);
           const val = parseInt(stdout.trim(), 10);
           if (!isNaN(val)) level = val;
-        } catch (pe) {
+        } catch {
           try {
-            const stdout = execSync(`sudo pinctrl lev ${pin}`, { encoding: 'utf-8', timeout: 1000 });
-            const val = parseInt(stdout.trim(), 10);
-            if (!isNaN(val)) level = val;
-          } catch (spe) { }
+            const stdout = execSync(`pinctrl get ${pin}`, execOpts);
+            if (stdout.includes('hi') || stdout.includes('level 1') || stdout.includes('lev=1')) level = 1;
+            else if (stdout.includes('lo') || stdout.includes('level 0') || stdout.includes('lev=0')) level = 0;
+          } catch { }
         }
 
+        // 2. Try gpioget (gpiod on Linux 6.x+)
         if (level === null) {
           try {
-            const stdout = execSync(`raspi-gpio get ${pin}`, { encoding: 'utf-8', timeout: 1000 });
-            const match = stdout.match(/level=(\d)/);
-            if (match) level = parseInt(match[1], 10);
-          } catch (rge) {
+            const stdout = execSync(`gpioget 0 ${pin}`, execOpts);
+            const val = parseInt(stdout.trim(), 10);
+            if (!isNaN(val)) level = val;
+          } catch {
             try {
-              const stdout = execSync(`sudo raspi-gpio get ${pin}`, { encoding: 'utf-8', timeout: 1000 });
-              const match = stdout.match(/level=(\d)/);
-              if (match) level = parseInt(match[1], 10);
-            } catch (srge) { }
+              const stdout = execSync(`gpioget 4 ${pin}`, execOpts); // RPi 5 chip
+              const val = parseInt(stdout.trim(), 10);
+              if (!isNaN(val)) level = val;
+            } catch { }
           }
         }
-      } catch (fallbackErr) { }
+
+        // 3. Fallback: raspi-gpio (older Bullseye/Buster)
+        if (level === null) {
+          try {
+            const stdout = execSync(`raspi-gpio get ${pin}`, execOpts);
+            const match = stdout.match(/level=(\d)/);
+            if (match) level = parseInt(match[1], 10);
+          } catch { }
+        }
+      } catch { }
 
       if (level !== null) {
         status = level;
@@ -417,7 +430,7 @@ export function readSelectorPins() {
     if (readSuccess) {
       result.push({ pin: pin, status: status });
     } else {
-      logger.error(`Error al leer el pin selector ${pin}: fallaron onoff y los comandos CLI alternativos`, null, 'HW');
+      logger.debug(`No se pudo leer el pin selector ${pin} (onoff / CLI no disponibles)`, 'HW');
       result.push({ pin: pin, status: 0 });
     }
   });
