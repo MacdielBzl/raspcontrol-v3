@@ -39,6 +39,7 @@ const config = {
   TELEMETRY_INTERVAL_MS: 30000,  // 30 seconds (for local testing; use 300000 in production)
   CONTROL_LOOP_INTERVAL_MS: 10000, // 10 seconds
   ENERGY_INTERVAL_MS: parseInt(process.env.ENERGY_INTERVAL_MS, 10) || 60000, // 60 seconds (1 minute)
+  MANIFEST_SYNC_INTERVAL_MS: parseInt(process.env.MANIFEST_SYNC_INTERVAL_MS, 10) || 300000, // 5 minutes (300 seconds)
 
   // OneWire Sensors Settings
   ONEWIRE_SAMPLES: parseInt(process.env.ONEWIRE_SAMPLES, 10) || 5,

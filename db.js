@@ -170,7 +170,7 @@ export const db = {
    * Gets schedules matching a deviceId.
    */
   getSchedulesForDevice: (deviceId) => {
-    return dataStore.schedules.filter(sch => sch.deviceId === deviceId);
+    return dataStore.schedules.filter(sch => String(sch.deviceId) === String(deviceId));
   },
 
   /**

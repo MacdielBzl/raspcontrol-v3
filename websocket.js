@@ -255,6 +255,16 @@ export const wsClient = {
       db.clearQueuedTelemetry(sentCount);
       logger.success(`Se transmitieron con éxito ${sentCount} registros fuera de línea.`, 'NET');
     }
+  },
+
+  /**
+   * Explicitly requests an updated manifest from the server.
+   */
+  requestManifest: () => {
+    if (wsClient.isConnected() && registered) {
+      logger.debug('Solicitando manifiesto actualizado al servidor...', 'NET');
+      wsClient.send('request_manifest', { timestamp: new Date().toISOString() });
+    }
   }
 };
 

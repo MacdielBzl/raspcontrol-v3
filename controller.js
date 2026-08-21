@@ -23,19 +23,33 @@ function getRelayInstance(pin, deviceId) {
  * Checks if the current local time falls within a schedule's active window.
  */
 function isScheduleActive(sch) {
-  if (!sch.days || !Array.isArray(sch.days)) return false;
+  if (!sch || !sch.days || !Array.isArray(sch.days) || sch.days.length === 0) return false;
   
   const now = moment().tz(config.TIMEZONE);
   const currentDay = now.isoWeekday().toString(); // 1 = Monday, ..., 7 = Sunday
   
-  const dayMatches = sch.days.map(String).includes(currentDay);
+  const dayMatches = sch.days.some(d => String(d).trim() === currentDay);
   if (!dayMatches) return false;
   
   const currentTimeStr = now.format(config.TIME_FORMAT);
-  const startTime = sch.startTime || '00:00:00';
-  const endTime = sch.endTime || '00:00:00';
   
-  return currentTimeStr >= startTime && currentTimeStr <= endTime;
+  const padTime = (t, def) => {
+    if (!t) return def;
+    const parts = String(t).trim().split(':');
+    if (parts.length === 1) return `${parts[0].padStart(2, '0')}:00:00`;
+    if (parts.length === 2) return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:00`;
+    return `${parts[0].padStart(2, '0')}:${parts[1].padStart(2, '0')}:${parts[2].padStart(2, '0')}`;
+  };
+
+  const startTime = padTime(sch.startTime, '00:00:00');
+  const endTime = padTime(sch.endTime, '23:59:59');
+  
+  if (startTime <= endTime) {
+    return currentTimeStr >= startTime && currentTimeStr <= endTime;
+  } else {
+    // Overnight window (e.g. 22:00:00 to 06:00:00)
+    return currentTimeStr >= startTime || currentTimeStr <= endTime;
+  }
 }
 
 let isLoopRunning = false;

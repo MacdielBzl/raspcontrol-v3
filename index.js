@@ -9,6 +9,7 @@ import { readAllMeters } from './energy_meters.js';
 let controlInterval = null;
 let telemetryInterval = null;
 let energyInterval = null;
+let manifestInterval = null;
 
 async function runEnergyLoop() {
   try {
@@ -61,6 +62,11 @@ async function start() {
       runEnergyLoop();
     }, config.ENERGY_INTERVAL_MS);
 
+    logger.info(`Iniciando tareas de sincronización de manifiesto: ejecutándose cada ${config.MANIFEST_SYNC_INTERVAL_MS / 1000}s.`, 'SYS');
+    manifestInterval = setInterval(() => {
+      wsClient.requestManifest();
+    }, config.MANIFEST_SYNC_INTERVAL_MS);
+
     // Initial telemetry report after connection established (approx delay)
     setTimeout(() => {
       controller.reportTelemetry();
@@ -83,6 +89,7 @@ function shutdown(exitCode = 0) {
   if (controlInterval) clearInterval(controlInterval);
   if (telemetryInterval) clearInterval(telemetryInterval);
   if (energyInterval) clearInterval(energyInterval);
+  if (manifestInterval) clearInterval(manifestInterval);
   
   // Clean up pins
   try {

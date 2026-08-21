@@ -3,7 +3,8 @@ import { exec, execSync } from 'child_process';
 import config from './config.js';
 import logger from './logger.js';
 
-const READ_PIN_SELECTORS = [25, 26, 27];
+// Physical selectors array (empty by default: all pins and sensors must come dynamically from the manifest)
+const READ_PIN_SELECTORS = [];
 
 let Gpio;
 let isMockHardware = config.HARDWARE_MODE === 'MOCK';
@@ -73,9 +74,11 @@ export class GpioRelay {
     if (!isMockHardware) {
       if (!this.isI2C && !this.isModbus) {
         try {
-          this.gpio = new Gpio(this.pin, 'out');
+          if (Gpio) {
+            this.gpio = new Gpio(this.pin, 'out');
+          }
         } catch (err) {
-          logger.error(`Fallo al inicializar el pin físico GPIO ${this.pin}: ${err.message}`, null, 'HW');
+          logger.debug(`onoff (sysfs) no disponible para el pin ${this.pin} (${err.message}). Se usará controlador nativo alternativo (pinctrl/gpiod).`, 'HW');
         }
       }
     }
@@ -151,6 +154,53 @@ export class GpioRelay {
       } catch (err) {
         logger.error(`[Error GPIO] Fallo al escribir el pin ${this.pin}`, err, 'HW');
       }
+    } else {
+      // Driver CLI alternativo (pinctrl / gpioset / raspi-gpio) para Bookworm y Raspberry Pi 5
+      const execOpts = { encoding: 'utf-8', timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] };
+      const levelStr = value === 0 ? 'dl' : 'dh'; // active low / active high
+      const levelBit = value === 0 ? 0 : 1;
+      let written = false;
+
+      // 1. Probar pinctrl (Estándar oficial en Raspberry Pi OS Bookworm)
+      try {
+        execSync(`pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+        written = true;
+      } catch {
+        try {
+          execSync(`sudo pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+          written = true;
+        } catch { }
+      }
+
+      // 2. Probar gpioset (gpiod en Linux kernel 6.x+)
+      if (!written) {
+        try {
+          execSync(`gpioset 0 ${this.pin}=${levelBit}`, execOpts);
+          written = true;
+        } catch {
+          try {
+            execSync(`gpioset 4 ${this.pin}=${levelBit}`, execOpts); // Chip GPIO en Raspberry Pi 5
+            written = true;
+          } catch { }
+        }
+      }
+
+      // 3. Probar raspi-gpio (Raspberry Pi OS Bullseye/Buster)
+      if (!written) {
+        try {
+          execSync(`raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
+          written = true;
+        } catch {
+          try {
+            execSync(`sudo raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
+            written = true;
+          } catch { }
+        }
+      }
+
+      if (!written) {
+        logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
+      }
     }
   }
 
@@ -158,9 +208,7 @@ export class GpioRelay {
     if (!isMockHardware && !this.isI2C && !this.isModbus && this.gpio) {
       try {
         this.gpio.unexport();
-      } catch (err) {
-        logger.error(`[Error GPIO] Fallo al liberar/desexportar el pin ${this.pin}`, err, 'HW');
-      }
+      } catch { }
     }
   }
 }
