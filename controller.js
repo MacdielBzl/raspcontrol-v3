@@ -120,6 +120,19 @@ export const controller = {
       const targetStates = {};
       
       for (const dev of devices) {
+        // Comprobar si el dispositivo está deshabilitado o inactivo en el sistema
+        const isDisabled = dev.status === 'disabled' || dev.status === 'inactive' || dev.status === 'off';
+        if (isDisabled) {
+          logger.info(`Dispositivo ${dev.name} está DESHABILITADO en el sistema. Forzando relevadores a APAGADO.`, 'CTRL');
+          db.writeDeviceLog(dev.id, 'Dispositivo deshabilitado en el sistema: forzando apagado de relevadores.');
+          if (dev.type === 'hvac' || dev.compressorPin != null) {
+            targetStates[dev.id] = { fan: false, compressor: false };
+          } else {
+            targetStates[dev.id] = false;
+          }
+          continue;
+        }
+
         // Encontrar calendarios activos para este dispositivo
         const schedules = db.getSchedulesForDevice(dev.id);
         const activeSch = schedules.find(isScheduleActive);
@@ -129,7 +142,7 @@ export const controller = {
         
         // Verificación de anulación manual
         const currentState = db.getDeviceState(dev.id);
-        const isExplicitAuto = currentState.mode === 'auto' || dev.mode === 'auto';
+        const isExplicitAuto = (currentState.mode === 'auto' || dev.mode === 'auto') && !dev.manual_date;
         const isExplicitManual = currentState.mode === 'manual' || dev.mode === 'manual';
         
         let manualActive = false;
@@ -409,7 +422,7 @@ export const controller = {
    * Maneja los comandos de estado inmediatos recibidos desde el WebSocket.
    */
   handleCommand: async (deviceId, state) => {
-    logger.sync(`Ejecutando comando instantáneo para el dispositivo ${deviceId}`, 'CTRL');
+    logger.sync(`Ejecutando comando instantáneo para el dispositivo ${deviceId}: ${JSON.stringify(state)}`, 'CTRL');
     
     const devices = db.getDevices();
     const dev = devices.find(d => d.id === deviceId);
@@ -418,6 +431,18 @@ export const controller = {
       return;
     }
 
+    // 1. Manejo de cambio de Setpoint / Temperatura
+    if (state.setpoint !== undefined || state.SET_TEMPERATURE !== undefined || state.SET_SETPOINT !== undefined) {
+      const newSetpoint = Number(state.setpoint ?? state.SET_TEMPERATURE ?? state.SET_SETPOINT);
+      if (!isNaN(newSetpoint)) {
+        dev.setpoint = newSetpoint;
+        db.saveDeviceState(deviceId, { lastActiveSetpoint: newSetpoint });
+        db.writeDeviceLog(deviceId, `Comando instantáneo recibido: actualizar Setpoint a ${newSetpoint}°C`);
+        logger.info(`Setpoint de ${dev.name} actualizado a ${newSetpoint}°C vía comando.`, 'CTRL');
+      }
+    }
+
+    // 2. Modo Automático (restablecer a programación horaria)
     if (state.mode === 'auto' || state.clear_manual === true || state.auto === true) {
       db.saveDeviceState(deviceId, { manual_date: null, manual_on: null, mode: 'auto' });
       dev.manual_date = null;
@@ -436,21 +461,27 @@ export const controller = {
         compRelay.hasBeenWritten = false;
       }
 
+      db.save();
       await controller.run();
-    } else if (state.on !== undefined) {
+      await controller.reportTelemetry();
+    } 
+    // 3. Modo Manual / Temporizador / Forzado de Encendido o Apagado / Cambio de Modo
+    else if (state.on !== undefined || state.timer !== undefined || state.mode !== undefined) {
       let manualDate = null;
       if (state.timer) {
         manualDate = moment().tz(config.TIMEZONE).add(Number(state.timer), 'minutes').format(config.DATE_TIME_FORMAT);
       }
-      // NOTA CRÍTICA: NO guardar { on: state.on } aquí.
-      // El estado 'on' se actualiza en la base de datos únicamente cuando el lazo de control
-      // efectúa la escritura física en el hardware (Paso 5), permitiendo detectar la
-      // transición (targetOn !== currentState.on) y accionar el pin/relevador.
-      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: state.on, mode: 'manual' });
+      
+      const targetOn = state.on !== undefined ? Boolean(state.on) : (state.mode === 'off' ? false : true);
+      const targetMode = state.mode || (state.on !== undefined ? 'manual' : dev.mode || 'manual');
+
+      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: targetOn, mode: targetMode });
       dev.manual_date = manualDate;
-      dev.manual_on = state.on;
-      dev.mode = 'manual';
-      db.writeDeviceLog(deviceId, `Comando instantáneo recibido: forzar estado a ${state.on ? 'ENCENDIDO' : 'APAGADO'}${state.timer ? ` (temporizador por ${state.timer} min)` : ' (modo manual)'}`);
+      dev.manual_on = targetOn;
+      dev.mode = targetMode;
+
+      db.writeDeviceLog(deviceId, `Comando instantáneo recibido: forzar estado a ${targetOn ? 'ENCENDIDO' : 'APAGADO'}${state.timer ? ` (temporizador por ${state.timer} min)` : ` (modo ${targetMode})`}`);
+      logger.info(`Dispositivo ${dev.name} establecido en modo ${targetMode} (${targetOn ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
 
       // Forzar que el relevador físico ejecute la conmutación de inmediato
       if (dev.pin != null) {
@@ -462,7 +493,9 @@ export const controller = {
         compRelay.hasBeenWritten = false;
       }
 
+      db.save();
       await controller.run();
+      await controller.reportTelemetry();
     }
   },
 

@@ -1,180 +1,73 @@
 {
   "manifest": {
-    "gatewayId": "gateway-test",
+    "gatewayId": "test-gateway-01",
     "devices": [
       {
-        "id": "650000000000000000000116",
-        "name": "Clima LeadPik",
+        "id": "dev_active_01",
+        "name": "Clima Sala",
         "type": "hvac",
         "category": "climate",
+        "status": "active",
+        "mode": "auto",
         "pin": 17,
         "compressorPin": 18,
-        "tempId": "1",
-        "setpoint": 21,
-        "esmM": "278",
-        "externalId": "hvac-unified-uuid",
-        "wait_to_turn_on": 15,
-        "power_on_wait": 3,
-        "manual_date": null,
-        "manual_on": true,
+        "tempId": "mock",
+        "setpoint": 19,
         "schedules": [
           {
             "days": [
-              "1"
+              "1",
+              "2",
+              "3",
+              "4",
+              "5",
+              "6",
+              "7"
             ],
-            "startTime": "09:00:00",
-            "endTime": "18:00:00",
+            "startTime": "00:00:00",
+            "endTime": "23:59:59",
             "action": {
               "on": true,
-              "setpoint": 23
-            }
-          },
-          {
-            "days": [
-              "2"
-            ],
-            "startTime": "09:00:00",
-            "endTime": "18:00:00",
-            "action": {
-              "on": true,
-              "setpoint": 23
-            }
-          },
-          {
-            "days": [
-              "3"
-            ],
-            "startTime": "09:00:00",
-            "endTime": "18:00:00",
-            "action": {
-              "on": true,
-              "setpoint": 23
-            }
-          },
-          {
-            "days": [
-              "4"
-            ],
-            "startTime": "09:00:00",
-            "endTime": "18:00:00",
-            "action": {
-              "on": true,
-              "setpoint": 23
-            }
-          },
-          {
-            "days": [
-              "5"
-            ],
-            "startTime": "09:00:00",
-            "endTime": "18:00:00",
-            "action": {
-              "on": true,
-              "setpoint": 23
+              "setpoint": 21
             }
           }
-        ]
-      },
-      {
-        "id": "650000000000000000000118",
-        "name": "Clima ESM",
-        "type": "hvac",
-        "category": "climate",
-        "pin": 23,
-        "compressorPin": 24,
-        "tempId": "2",
-        "setpoint": 19,
-        "esmM": "280",
-        "externalId": "hvac-second-uuid",
-        "wait_to_turn_on": 15,
-        "power_on_wait": 3,
-        "manual_date": "2026-06-10 16:23:59",
-        "manual_on": true,
-        "schedules": []
+        ],
+        "manual_date": null,
+        "manual_on": null
       }
     ]
   },
   "deviceStates": {
-    "650000000000000000000116": {
-      "currentVal": 24.53,
-      "updatedAt": "2026-06-29T22:50:41.992Z",
-      "on": true,
-      "compressorOn": false,
-      "lastTurnedOff": "2026-06-10T18:44:49.234Z",
-      "lastActiveSetpoint": 23,
-      "sensorStatus": "OK",
-      "lastCompressorOff": 1782773431993
-    },
-    "650000000000000000000118": {
-      "currentVal": 24.56,
-      "updatedAt": "2026-06-29T22:50:41.993Z",
-      "on": false,
-      "compressorOn": false,
+    "dev_active_01": {
+      "mode": "auto",
+      "manual_date": null,
+      "manual_on": null,
       "lastActiveSetpoint": 19,
+      "currentVal": 23.39,
       "sensorStatus": "OK",
-      "lastCompressorOff": 1782772731383
+      "updatedAt": "2026-08-26T22:10:14.326Z",
+      "on": true,
+      "compressorOn": true
     }
   },
   "schedules": [
     {
       "days": [
-        "1"
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7"
       ],
-      "startTime": "09:00:00",
-      "endTime": "18:00:00",
+      "startTime": "00:00:00",
+      "endTime": "23:59:59",
       "action": {
         "on": true,
-        "setpoint": 23
+        "setpoint": 21
       },
-      "deviceId": "650000000000000000000116"
-    },
-    {
-      "days": [
-        "2"
-      ],
-      "startTime": "09:00:00",
-      "endTime": "18:00:00",
-      "action": {
-        "on": true,
-        "setpoint": 23
-      },
-      "deviceId": "650000000000000000000116"
-    },
-    {
-      "days": [
-        "3"
-      ],
-      "startTime": "09:00:00",
-      "endTime": "18:00:00",
-      "action": {
-        "on": true,
-        "setpoint": 23
-      },
-      "deviceId": "650000000000000000000116"
-    },
-    {
-      "days": [
-        "4"
-      ],
-      "startTime": "09:00:00",
-      "endTime": "18:00:00",
-      "action": {
-        "on": true,
-        "setpoint": 23
-      },
-      "deviceId": "650000000000000000000116"
-    },
-    {
-      "days": [
-        "5"
-      ],
-      "startTime": "09:00:00",
-      "endTime": "18:00:00",
-      "action": {
-        "on": true,
-        "setpoint": 23
-      },
-      "deviceId": "650000000000000000000116"
+      "deviceId": "dev_active_01"
     }
   ],
   "offlineTelemetry": [
@@ -1469,6 +1362,76 @@
       },
       "timestamp": "2026-06-29T22:50:51.580Z",
       "queuedAt": "2026-06-29T22:50:51.580Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "dev_active_01",
+            "on": true,
+            "lastUpdated": "2026-08-26T22:10:14.300Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 23.39
+          },
+          {
+            "deviceId": "dev_disabled_02",
+            "on": false,
+            "lastUpdated": "2026-08-26T22:10:14.294Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.39
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [],
+          "cpuTemp": 41.56
+        }
+      },
+      "timestamp": "2026-08-26T22:10:14.301Z",
+      "queuedAt": "2026-08-26T22:10:14.301Z"
+    },
+    {
+      "event": "telemetry",
+      "gatewayId": "gateway-test",
+      "telemetry": {
+        "devices": [
+          {
+            "deviceId": "dev_active_01",
+            "on": true,
+            "lastUpdated": "2026-08-26T22:10:14.326Z",
+            "compressorOn": true,
+            "sensorStatus": "OK",
+            "temperature": 23.39
+          },
+          {
+            "deviceId": "dev_disabled_02",
+            "on": false,
+            "lastUpdated": "2026-08-26T22:10:14.312Z",
+            "compressorOn": false,
+            "sensorStatus": "OK",
+            "temperature": 23.39
+          }
+        ],
+        "metrics": {
+          "disk": {
+            "usedspace": 14.2,
+            "freespace": 16.5,
+            "totalspace": 30.7
+          },
+          "selectors": [],
+          "cpuTemp": 41.56
+        }
+      },
+      "timestamp": "2026-08-26T22:10:14.327Z",
+      "queuedAt": "2026-08-26T22:10:14.327Z"
     }
   ]
 }

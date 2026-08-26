@@ -3,6 +3,7 @@ import path from 'path';
 import moment from 'moment-timezone';
 import config from './config.js';
 import logger from './logger.js';
+import hardware from './hardware.js';
 
 let dataStore = {
   manifest: {
@@ -74,10 +75,38 @@ export const db = {
   saveManifest: (manifestData) => {
     if (!manifestData) return;
     
-    // Comparar setpoints de dispositivos nuevos vs viejos para registrar cambios
     const oldDevices = dataStore.manifest.devices || [];
     const newDevices = manifestData.devices || [];
     
+    // Apagar relevadores de dispositivos que fueron removidos o desvinculados del manifiesto
+    oldDevices.forEach(oldDev => {
+      const stillExists = newDevices.some(d => d.id === oldDev.id);
+      if (!stillExists) {
+        const msg = `Dispositivo ${oldDev.name} (${oldDev.id}) desvinculado o eliminado del manifiesto. Apagando relevadores...`;
+        logger.warn(msg, 'DB');
+        db.writeDeviceLog(oldDev.id, msg);
+        if (oldDev.pin != null) {
+          try {
+            const relay = new hardware.GpioRelay(oldDev.pin, oldDev.device_id);
+            relay.write(1); // 1 = APAGADO
+            relay.release();
+          } catch (e) {
+            logger.error(`Error apagando pin ${oldDev.pin} de dispositivo eliminado:`, e, 'DB');
+          }
+        }
+        if (oldDev.compressorPin != null) {
+          try {
+            const compRelay = new hardware.GpioRelay(oldDev.compressorPin, oldDev.device_id);
+            compRelay.write(1); // 1 = APAGADO
+            compRelay.release();
+          } catch (e) {
+            logger.error(`Error apagando compressorPin ${oldDev.compressorPin} de dispositivo eliminado:`, e, 'DB');
+          }
+        }
+        delete dataStore.deviceStates[oldDev.id];
+      }
+    });
+
     newDevices.forEach(newDev => {
       const oldDev = oldDevices.find(d => d.id === newDev.id);
       if (oldDev) {
@@ -90,6 +119,34 @@ export const db = {
         const msg = `Dispositivo registrado: ${newDev.name} con Setpoint inicial de ${newDev.setpoint !== null ? newDev.setpoint + '°C' : 'Ninguno'}`;
         logger.info(msg, 'DB');
         db.writeDeviceLog(newDev.id, msg);
+      }
+
+      // Reconciliar estado runtime
+      const existingState = dataStore.deviceStates[newDev.id] || {};
+      if (newDev.status === 'disabled' || newDev.status === 'inactive' || newDev.status === 'off') {
+        dataStore.deviceStates[newDev.id] = {
+          ...existingState,
+          mode: 'off',
+          manual_date: null,
+          manual_on: false,
+          lastActiveSetpoint: newDev.setpoint ?? existingState.lastActiveSetpoint
+        };
+      } else if (newDev.mode === 'auto' && !newDev.manual_date) {
+        dataStore.deviceStates[newDev.id] = {
+          ...existingState,
+          mode: 'auto',
+          manual_date: null,
+          manual_on: null,
+          lastActiveSetpoint: newDev.setpoint ?? existingState.lastActiveSetpoint
+        };
+      } else if (newDev.manual_date !== undefined || newDev.manual_on !== undefined || newDev.mode !== undefined) {
+        dataStore.deviceStates[newDev.id] = {
+          ...existingState,
+          mode: newDev.mode || existingState.mode || 'auto',
+          manual_date: newDev.manual_date !== undefined ? newDev.manual_date : (existingState.manual_date ?? null),
+          manual_on: newDev.manual_on !== undefined ? newDev.manual_on : (existingState.manual_on ?? null),
+          lastActiveSetpoint: newDev.setpoint ?? existingState.lastActiveSetpoint
+        };
       }
     });
 

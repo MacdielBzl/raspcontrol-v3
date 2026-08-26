@@ -220,6 +220,9 @@ export class GpioRelay {
   }
 
   release() {
+    try {
+      this.write(1); // Ensure relay is safely turned OFF before releasing pin
+    } catch { }
     if (!isMockHardware && !this.isI2C && !this.isModbus && this.gpio) {
       try {
         this.gpio.unexport();
