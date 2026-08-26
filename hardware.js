@@ -152,55 +152,70 @@ export class GpioRelay {
       try {
         this.gpio.writeSync(value);
       } catch (err) {
-        logger.error(`[Error GPIO] Fallo al escribir el pin ${this.pin}`, err, 'HW');
+        logger.error(`[Error GPIO] Fallo al escribir el pin ${this.pin} con onoff (${err.message}). Recurriendo a controladores CLI...`, null, 'HW');
+        this.gpio = null;
+        this.writeCli(value);
       }
     } else {
-      // Driver CLI alternativo (pinctrl / gpioset / raspi-gpio) para Bookworm y Raspberry Pi 5
-      const execOpts = { encoding: 'utf-8', timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] };
-      const levelStr = value === 0 ? 'dl' : 'dh'; // active low / active high
-      const levelBit = value === 0 ? 0 : 1;
-      let written = false;
+      this.writeCli(value);
+    }
+  }
 
-      // 1. Probar pinctrl (Estándar oficial en Raspberry Pi OS Bookworm)
+  writeCli(value) {
+    // Driver CLI alternativo (pinctrl / gpioset / raspi-gpio) para Bookworm y Raspberry Pi 5
+    const execOpts = { encoding: 'utf-8', timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] };
+    const levelStr = value === 0 ? 'dl' : 'dh'; // active low / active high
+    const levelBit = value === 0 ? 0 : 1;
+    let written = false;
+
+    // 1. Probar pinctrl (Estándar oficial en Raspberry Pi OS Bookworm)
+    try {
+      execSync(`pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+      written = true;
+    } catch {
       try {
-        execSync(`pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+        execSync(`sudo pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+        written = true;
+      } catch { }
+    }
+
+    // 2. Probar gpioset (gpiod en Linux kernel 6.x+)
+    if (!written) {
+      const gpiosetAttempts = [
+        `gpioset 0 ${this.pin}=${levelBit}`,
+        `gpioset 4 ${this.pin}=${levelBit}`,
+        `gpioset -c 0 ${this.pin}=${levelBit}`,
+        `gpioset -c 4 ${this.pin}=${levelBit}`,
+        `sudo gpioset 0 ${this.pin}=${levelBit}`,
+        `sudo gpioset 4 ${this.pin}=${levelBit}`,
+        `sudo gpioset -c 0 ${this.pin}=${levelBit}`,
+        `sudo gpioset -c 4 ${this.pin}=${levelBit}`
+      ];
+
+      for (const cmd of gpiosetAttempts) {
+        try {
+          execSync(cmd, execOpts);
+          written = true;
+          break;
+        } catch { }
+      }
+    }
+
+    // 3. Probar raspi-gpio (Raspberry Pi OS Bullseye/Buster)
+    if (!written) {
+      try {
+        execSync(`raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
         written = true;
       } catch {
         try {
-          execSync(`sudo pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+          execSync(`sudo raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
           written = true;
         } catch { }
       }
+    }
 
-      // 2. Probar gpioset (gpiod en Linux kernel 6.x+)
-      if (!written) {
-        try {
-          execSync(`gpioset 0 ${this.pin}=${levelBit}`, execOpts);
-          written = true;
-        } catch {
-          try {
-            execSync(`gpioset 4 ${this.pin}=${levelBit}`, execOpts); // Chip GPIO en Raspberry Pi 5
-            written = true;
-          } catch { }
-        }
-      }
-
-      // 3. Probar raspi-gpio (Raspberry Pi OS Bullseye/Buster)
-      if (!written) {
-        try {
-          execSync(`raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
-          written = true;
-        } catch {
-          try {
-            execSync(`sudo raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
-            written = true;
-          } catch { }
-        }
-      }
-
-      if (!written) {
-        logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
-      }
+    if (!written) {
+      logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
     }
   }
 

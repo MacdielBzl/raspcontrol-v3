@@ -12,9 +12,10 @@ const relayPins = {};
  * Helper to get or create a GpioRelay instance for a pin.
  */
 function getRelayInstance(pin, deviceId) {
-  const key = `${pin}-${deviceId || ''}`;
+  const normalizedPin = Number(pin);
+  const key = `${normalizedPin}-${deviceId || ''}`;
   if (!relayPins[key]) {
-    relayPins[key] = new hardware.GpioRelay(pin, deviceId);
+    relayPins[key] = new hardware.GpioRelay(normalizedPin, deviceId);
   }
   return relayPins[key];
 }
@@ -424,17 +425,43 @@ export const controller = {
       dev.mode = 'auto';
       db.writeDeviceLog(deviceId, 'Comando instantáneo recibido: restaurar modo AUTOMÁTICO (por horario)');
       logger.info(`Dispositivo ${dev.name} restablecido a modo AUTOMÁTICO (por horario).`, 'CTRL');
+
+      // Forzar evaluación y escritura física del relevador
+      if (dev.pin != null) {
+        const relay = getRelayInstance(dev.pin, dev.device_id);
+        relay.hasBeenWritten = false;
+      }
+      if (dev.compressorPin != null) {
+        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id);
+        compRelay.hasBeenWritten = false;
+      }
+
       await controller.run();
     } else if (state.on !== undefined) {
       let manualDate = null;
       if (state.timer) {
         manualDate = moment().tz(config.TIMEZONE).add(Number(state.timer), 'minutes').format(config.DATE_TIME_FORMAT);
       }
-      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: state.on, mode: 'manual', on: state.on });
+      // NOTA CRÍTICA: NO guardar { on: state.on } aquí.
+      // El estado 'on' se actualiza en la base de datos únicamente cuando el lazo de control
+      // efectúa la escritura física en el hardware (Paso 5), permitiendo detectar la
+      // transición (targetOn !== currentState.on) y accionar el pin/relevador.
+      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: state.on, mode: 'manual' });
       dev.manual_date = manualDate;
       dev.manual_on = state.on;
       dev.mode = 'manual';
       db.writeDeviceLog(deviceId, `Comando instantáneo recibido: forzar estado a ${state.on ? 'ENCENDIDO' : 'APAGADO'}${state.timer ? ` (temporizador por ${state.timer} min)` : ' (modo manual)'}`);
+
+      // Forzar que el relevador físico ejecute la conmutación de inmediato
+      if (dev.pin != null) {
+        const relay = getRelayInstance(dev.pin, dev.device_id);
+        relay.hasBeenWritten = false;
+      }
+      if (dev.compressorPin != null) {
+        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id);
+        compRelay.hasBeenWritten = false;
+      }
+
       await controller.run();
     }
   },
