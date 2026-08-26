@@ -138,7 +138,7 @@ export const PROFILES = {
 };
 
 /**
- * Reads a single device's Modbus registers and decodes them.
+ * Reads a single device's Modbus registers and decodes them with timeout protection.
  */
 async function readDeviceModbus(client, profile, slaveId) {
   const data = {};
@@ -152,12 +152,15 @@ async function readDeviceModbus(client, profile, slaveId) {
     
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        let response;
-        if (profile.readMethod === 'holding') {
-          response = await client.readHoldingRegisters(item.address, item.count);
-        } else {
-          response = await client.readInputRegisters(item.address, item.count);
-        }
+        const readPromise = profile.readMethod === 'holding'
+          ? client.readHoldingRegisters(item.address, item.count)
+          : client.readInputRegisters(item.address, item.count);
+        
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout de lectura en registro ${item.name}`)), 2500)
+        );
+
+        const response = await Promise.race([readPromise, timeoutPromise]);
         
         if (response && response.response && response.response.body && response.response.body.valuesAsArray) {
           const rawRegisters = response.response.body.valuesAsArray;
@@ -174,11 +177,11 @@ async function readDeviceModbus(client, profile, slaveId) {
           success = true;
           break;
         } else {
-          await new Promise(resolve => setTimeout(resolve, 150));
+          await new Promise(resolve => setTimeout(resolve, 100));
         }
       } catch (err) {
         lastError = err;
-        await new Promise(resolve => setTimeout(resolve, 150));
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
     }
     
@@ -373,14 +376,23 @@ export async function readAllMeters(devices) {
       }
     }
   } finally {
-    // Gracefully close serial port
+    // Gracefully close serial port asynchronously
     if (serialport && serialport.isOpen) {
-      try {
-        serialport.close();
-        logger.debug('Puerto serial Modbus cerrado.', 'ENERGY');
-      } catch (err) {
-        logger.error('Error cerrando puerto serial Modbus:', err, 'ENERGY');
-      }
+      await new Promise((resolve) => {
+        try {
+          serialport.close((err) => {
+            if (err) {
+              logger.error('Error cerrando puerto serial Modbus:', err, 'ENERGY');
+            } else {
+              logger.debug('Puerto serial Modbus cerrado con éxito.', 'ENERGY');
+            }
+            resolve();
+          });
+        } catch (closeErr) {
+          logger.error('Excepción al cerrar puerto serial Modbus:', closeErr, 'ENERGY');
+          resolve();
+        }
+      });
     }
   }
   

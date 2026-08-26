@@ -8,7 +8,14 @@ let isConnecting = false;
 let registered = false;
 let reconnectDelay = config.RECONNECT_INITIAL_DELAY;
 let heartbeatInterval = null;
+let heartbeatTimeout = null;
+let connectTimeout = null;
 let commandCallback = null;
+let reconnectTimer = null;
+
+const HEARTBEAT_INTERVAL_MS = 25000;
+const HEARTBEAT_ACK_TIMEOUT_MS = 12000;
+const CONNECT_TIMEOUT_MS = 10000;
 
 export const wsClient = {
   /**
@@ -25,6 +32,13 @@ export const wsClient = {
     if (wsClient.isConnected() || isConnecting) return;
     
     isConnecting = true;
+    wsClient.cleanup();
+
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+
     logger.info(`Conectando al servidor WebSocket en ${config.SERVER_WS_URL}...`, 'NET');
 
     try {
@@ -32,11 +46,24 @@ export const wsClient = {
         headers: {
           'x-gateway-id': config.GATEWAY_ID,
           'x-gateway-token': config.GATEWAY_TOKEN
-        }
+        },
+        handshakeTimeout: CONNECT_TIMEOUT_MS
       });
+
+      // Watchdog for connection handshake
+      connectTimeout = setTimeout(() => {
+        if (isConnecting && (!ws || ws.readyState !== WebSocket.OPEN)) {
+          logger.warn(`Tiempo de espera de conexión agotado (${CONNECT_TIMEOUT_MS}ms). Forzando reintento...`, 'NET');
+          wsClient.forceReconnect();
+        }
+      }, CONNECT_TIMEOUT_MS + 2000);
 
       ws.on('open', () => {
         isConnecting = false;
+        if (connectTimeout) {
+          clearTimeout(connectTimeout);
+          connectTimeout = null;
+        }
         logger.success('Conexión WebSocket establecida. Enviando handshake de registro...', 'NET');
         wsClient.send('register', {
           gatewayId: config.GATEWAY_ID,
@@ -63,33 +90,74 @@ export const wsClient = {
 
       ws.on('error', (error) => {
         isConnecting = false;
-        logger.error('El WebSocket encontró un error.', error, 'NET');
+        logger.error('El WebSocket encontró un error:', error.message || error, 'NET');
         // Close event will follow and trigger reconnection
+      });
+
+      ws.on('pong', () => {
+        if (heartbeatTimeout) {
+          clearTimeout(heartbeatTimeout);
+          heartbeatTimeout = null;
+        }
       });
 
     } catch (err) {
       isConnecting = false;
       logger.error('Fallo al instanciar la conexión WebSocket.', err, 'NET');
+      wsClient.cleanup();
       wsClient.scheduleReconnect();
     }
   },
 
   /**
-   * Cleans up running intervals and states on disconnect.
+   * Cleans up running intervals, timeouts, and states on disconnect.
    */
   cleanup: () => {
     if (heartbeatInterval) {
       clearInterval(heartbeatInterval);
       heartbeatInterval = null;
     }
+    if (heartbeatTimeout) {
+      clearTimeout(heartbeatTimeout);
+      heartbeatTimeout = null;
+    }
+    if (connectTimeout) {
+      clearTimeout(connectTimeout);
+      connectTimeout = null;
+    }
+  },
+
+  /**
+   * Forcibly destroys the active socket and triggers a clean reconnection.
+   */
+  forceReconnect: () => {
+    logger.warn('Forzando terminación de socket zombi y reconexión inmediata...', 'NET');
+    wsClient.cleanup();
+    registered = false;
+    isConnecting = false;
+    
+    if (ws) {
+      try {
+        ws.removeAllListeners();
+        ws.terminate();
+      } catch (err) {
+        logger.debug('Error terminando socket:', err);
+      }
+      ws = null;
+    }
+
+    wsClient.scheduleReconnect();
   },
 
   /**
    * Schedules a connection retry with exponential backoff.
    */
   scheduleReconnect: () => {
+    if (reconnectTimer) return; // Ya hay un reintento programado
+    
     logger.info(`Programando reconexión en ${reconnectDelay}ms...`, 'NET');
-    setTimeout(() => {
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
       // Adjust backoff delay for the next attempt
       reconnectDelay = Math.min(
         reconnectDelay * config.RECONNECT_BACKOFF_FACTOR,
@@ -129,7 +197,7 @@ export const wsClient = {
   /**
    * Handles incoming WebSocket messages by routing them based on event type.
    */
-  handleMessage: (message) => {
+  handleMessage: async (message) => {
     const { event, data } = message;
     if (!event) return;
 
@@ -147,17 +215,32 @@ export const wsClient = {
       case 'gateway_manifest':
         logger.sync('Se recibió actualización de manifiesto del servidor.', 'NET');
         db.saveManifest(data);
+        // Trigger immediate control loop tick to apply updated configurations without delay
+        try {
+          const { default: controller } = await import('./controller.js');
+          controller.run();
+        } catch (ctrlErr) {
+          logger.error('Error al invocar ciclo de control tras actualización de manifiesto.', ctrlErr, 'NET');
+        }
         break;
 
       case 'device_command':
         logger.info(`Comando de dispositivo recibido para ${data.deviceId}`, 'NET');
         if (commandCallback) {
-          commandCallback(data.deviceId, data.state);
+          try {
+            commandCallback(data.deviceId, data.state);
+          } catch (cmdErr) {
+            logger.error(`Error procesando comando para el dispositivo ${data.deviceId}:`, cmdErr, 'NET');
+          }
         }
         break;
 
       case 'heartbeat_ack':
         logger.debug('Latido de corazón de servidor reconocido.', 'NET');
+        if (heartbeatTimeout) {
+          clearTimeout(heartbeatTimeout);
+          heartbeatTimeout = null;
+        }
         break;
 
       default:
@@ -166,16 +249,27 @@ export const wsClient = {
   },
 
   /**
-   * Periodically sends a ping to the server to maintain the connection.
+   * Periodically sends a ping to the server with watchdog protection.
    */
   startHeartbeat: () => {
     if (heartbeatInterval) clearInterval(heartbeatInterval);
+    if (heartbeatTimeout) clearTimeout(heartbeatTimeout);
     
     heartbeatInterval = setInterval(() => {
       if (wsClient.isConnected()) {
-        wsClient.send('ping', { timestamp: new Date().toISOString() });
+        const pingSent = wsClient.send('ping', { timestamp: new Date().toISOString() });
+        if (pingSent) {
+          // Arm watchdog timer for ACK response
+          if (heartbeatTimeout) clearTimeout(heartbeatTimeout);
+          heartbeatTimeout = setTimeout(() => {
+            logger.warn(`Watchdog: Sin respuesta de heartbeat en ${HEARTBEAT_ACK_TIMEOUT_MS}ms. Conexión zombi detectada.`, 'NET');
+            wsClient.forceReconnect();
+          }, HEARTBEAT_ACK_TIMEOUT_MS);
+        }
+      } else {
+        wsClient.forceReconnect();
       }
-    }, 30000); // Send ping every 30 seconds
+    }, HEARTBEAT_INTERVAL_MS);
   },
 
   /**
@@ -228,7 +322,7 @@ export const wsClient = {
   },
 
   /**
-   * Flushes any queued offline telemetry records to the server.
+   * Flushes any queued offline telemetry records to the server with rate-limiting.
    */
   flushOfflineTelemetry: async () => {
     const queued = db.getQueuedTelemetry();
@@ -238,14 +332,15 @@ export const wsClient = {
     
     let sentCount = 0;
     for (const record of queued) {
-      if (!wsClient.isConnected()) break;
+      if (!wsClient.isConnected() || !registered) break;
       
-      // Determine the correct event (use the original event or fallback)
       const eventType = record.event === 'energy_telemetry' ? 'energy_telemetry' : 'telemetry_offline';
       
       const success = wsClient.send(eventType, record);
       if (success) {
         sentCount++;
+        // Small delay to prevent network buffer overflow
+        await new Promise(resolve => setTimeout(resolve, 50));
       } else {
         break;
       }

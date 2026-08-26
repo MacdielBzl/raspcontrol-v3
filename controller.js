@@ -53,6 +53,9 @@ function isScheduleActive(sch) {
 }
 
 let isLoopRunning = false;
+let hasPendingRun = false;
+let loopStartTime = 0;
+const MAX_LOOP_DURATION_MS = 30000;
 
 export const controller = {
   /**
@@ -67,16 +70,25 @@ export const controller = {
    * Punto de entrada principal para ejecutar un ciclo del lazo de control.
    */
   run: async () => {
+    const nowTimestamp = Date.now();
     if (isLoopRunning) {
-      logger.warn('El ciclo del lazo de control ya está en ejecución. Omitiendo este ciclo.', 'CTRL');
-      return;
+      if (nowTimestamp - loopStartTime > MAX_LOOP_DURATION_MS) {
+        logger.warn(`Watchdog: El ciclo del lazo de control superó los ${MAX_LOOP_DURATION_MS / 1000}s. Forzando liberación de bloqueo.`, 'CTRL');
+        isLoopRunning = false;
+      } else {
+        logger.debug('El ciclo del lazo de control ya está en ejecución. Marcando ejecución pendiente.', 'CTRL');
+        hasPendingRun = true;
+        return;
+      }
     }
+
     isLoopRunning = true;
+    loopStartTime = Date.now();
+
     try {
       const devices = db.getDevices();
       if (devices.length === 0) {
         logger.debug('No hay dispositivos cargados en el manifiesto. Omitiendo ciclo de control.', 'CTRL');
-        isLoopRunning = false;
         return;
       }
 
@@ -370,6 +382,13 @@ export const controller = {
       logger.error('Ocurrió un error en el ciclo de la tarea de control.', error, 'CTRL');
     } finally {
       isLoopRunning = false;
+      if (hasPendingRun) {
+        hasPendingRun = false;
+        logger.debug('Procesando ejecución pendiente del lazo de control...', 'CTRL');
+        setTimeout(() => {
+          controller.run();
+        }, 100);
+      }
     }
   },
 

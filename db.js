@@ -174,9 +174,16 @@ export const db = {
   },
 
   /**
-   * Appends telemetry records to the offline queue.
+   * Appends telemetry records to the offline queue with length cap.
    */
   queueTelemetry: (telemetryRecord) => {
+    const MAX_OFFLINE_TELEMETRY = 500;
+    
+    // Trim oldest records if buffer is full to prevent storage exhaustion
+    if (dataStore.offlineTelemetry.length >= MAX_OFFLINE_TELEMETRY) {
+      dataStore.offlineTelemetry = dataStore.offlineTelemetry.slice(-Math.floor(MAX_OFFLINE_TELEMETRY * 0.8));
+    }
+
     dataStore.offlineTelemetry.push({
       ...telemetryRecord,
       queuedAt: new Date().toISOString()

@@ -214,42 +214,51 @@ export class GpioRelay {
 }
 
 /**
- * DS18B20 1-Wire Temperature Reading (Pure JS)
+ * DS18B20 1-Wire Temperature Reading (Pure JS with Timeout Protection)
  */
 async function readDS18B20Raw(sensorId) {
   const devicePath = `/sys/bus/w1/devices/${sensorId}/w1_slave`;
   try {
-    try {
-      await fs.promises.access(devicePath);
-    } catch {
-      return { value: null, status: 'DISCONNECTED' };
-    }
-
-    const data = await fs.promises.readFile(devicePath, 'utf-8');
-    const lines = data.split('\n');
-
-    if (lines.length >= 2) {
-      if (!lines[0].includes('YES')) {
-        return { value: null, status: 'CRC_ERROR' };
+    const readPromise = async () => {
+      try {
+        await fs.promises.access(devicePath);
+      } catch {
+        return { value: null, status: 'DISCONNECTED' };
       }
-      const tempIndex = lines[1].indexOf('t=');
-      if (tempIndex !== -1) {
-        const tempString = lines[1].substring(tempIndex + 2).trim();
-        const tempC = parseFloat(tempString) / 1000.0;
-        if (!isNaN(tempC)) {
-          if (tempC === 85.0) {
-            return { value: tempC, status: 'FAULT_85C' };
+
+      const data = await fs.promises.readFile(devicePath, 'utf-8');
+      const lines = data.split('\n');
+
+      if (lines.length >= 2) {
+        if (!lines[0].includes('YES')) {
+          return { value: null, status: 'CRC_ERROR' };
+        }
+        const tempIndex = lines[1].indexOf('t=');
+        if (tempIndex !== -1) {
+          const tempString = lines[1].substring(tempIndex + 2).trim();
+          const tempC = parseFloat(tempString) / 1000.0;
+          if (!isNaN(tempC)) {
+            if (tempC === 85.0) {
+              return { value: tempC, status: 'FAULT_85C' };
+            }
+            if (tempC === 127.75) {
+              return { value: tempC, status: 'FAULT_127C' };
+            }
+            if (tempC < -55.0 || tempC > 125.0) {
+              return { value: tempC, status: 'INVALID_RANGE' };
+            }
+            return { value: tempC, status: 'OK' };
           }
-          if (tempC === 127.75) {
-            return { value: tempC, status: 'FAULT_127C' };
-          }
-          if (tempC < -55.0 || tempC > 125.0) {
-            return { value: tempC, status: 'INVALID_RANGE' };
-          }
-          return { value: tempC, status: 'OK' };
         }
       }
-    }
+      return { value: null, status: 'UNKNOWN_ERROR' };
+    };
+
+    const timeoutPromise = new Promise((resolve) => 
+      setTimeout(() => resolve({ value: null, status: 'READ_TIMEOUT' }), 2000)
+    );
+
+    return await Promise.race([readPromise(), timeoutPromise]);
   } catch (err) {
     logger.error(`Error al leer el sensor ${sensorId}`, err, 'HW');
   }
@@ -268,16 +277,18 @@ function getMedian(arr) {
 
 const tempCache = {};
 const CACHE_TTL_MS = 5000;
+const FAILED_CACHE_TTL_MS = 15000;
 
 /**
  * Reads temperature from CPU, 1-wire DS18B20, or Modbus.
- * Implements 5 second cache.
+ * Implements adaptive cache for normal and failing sensors.
  */
 export async function getTemperature(sensorId) {
   const now = Date.now();
   if (sensorId && tempCache[sensorId]) {
     const cached = tempCache[sensorId];
-    if (now - cached.timestamp < CACHE_TTL_MS) {
+    const ttl = cached.data?.success ? CACHE_TTL_MS : FAILED_CACHE_TTL_MS;
+    if (now - cached.timestamp < ttl) {
       return cached.data;
     }
   }
@@ -340,9 +351,9 @@ export async function getTemperature(sensorId) {
     return response;
   }
 
-  const NUMBER_OF_SAMPLES = config.ONEWIRE_SAMPLES || 5;
-  const SAMPLE_DELAY_MS = config.ONEWIRE_SAMPLE_DELAY_MS || 1000;
-  const NUMBER_OF_ATTEMPTS = config.ONEWIRE_MAX_ATTEMPTS || 3;
+  const NUMBER_OF_SAMPLES = config.ONEWIRE_SAMPLES || 3;
+  const SAMPLE_DELAY_MS = config.ONEWIRE_SAMPLE_DELAY_MS || 250;
+  const NUMBER_OF_ATTEMPTS = config.ONEWIRE_MAX_ATTEMPTS || 2;
 
   let lastStatus = 'UNKNOWN';
 

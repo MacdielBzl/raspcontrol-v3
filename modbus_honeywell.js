@@ -54,15 +54,35 @@ export class HoneywellModbusTCPClient {
     this.cleanup();
 
     return new Promise((resolve, reject) => {
+      let finished = false;
       this.socket = new net.Socket();
+
+      const timeout = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          this.cleanup();
+          reject(new Error(`Timeout de conexión Modbus TCP a ${this.host}:${this.port}`));
+        }
+      }, 4000);
       
       const TCPClient = Modbus.client?.TCP || Modbus.default?.client?.TCP || Modbus.client;
       this.client = new TCPClient(this.socket, this.unitId);
 
-      this.socket.on('connect', () => resolve(true));
+      this.socket.on('connect', () => {
+        if (!finished) {
+          finished = true;
+          clearTimeout(timeout);
+          resolve(true);
+        }
+      });
+
       this.socket.on('error', (err) => {
-        this.cleanup();
-        reject(err);
+        if (!finished) {
+          finished = true;
+          clearTimeout(timeout);
+          this.cleanup();
+          reject(err);
+        }
       });
 
       this.socket.connect({ host: this.host, port: this.port });
@@ -71,7 +91,10 @@ export class HoneywellModbusTCPClient {
 
   cleanup() {
     if (this.socket) {
-      try { this.socket.destroy(); } catch (e) {}
+      try { 
+        this.socket.removeAllListeners();
+        this.socket.destroy(); 
+      } catch (e) {}
     }
     this.socket = null;
     this.client = null;
@@ -84,9 +107,14 @@ export class HoneywellModbusTCPClient {
 
     try {
       await this.connect();
-      const response = await this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
+      const readPromise = this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout de lectura de registros Modbus TCP')), 3000)
+      );
 
-      if (response && response.response && response.response.body.valuesAsArray.length > 0) {
+      const response = await Promise.race([readPromise, timeoutPromise]);
+
+      if (response && response.response && response.response.body && response.response.body.valuesAsArray.length > 0) {
         return response.response.body.valuesAsArray[0] / 10.0;
       }
       throw new Error('No data received');
@@ -106,7 +134,12 @@ export class HoneywellModbusTCPClient {
 
     try {
       await this.connect();
-      await this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
+      const writePromise = this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout de escritura Modbus TCP')), 3000)
+      );
+
+      await Promise.race([writePromise, timeoutPromise]);
       return true;
     } catch (err) {
       this.cleanup(); // Liberar socket dañado
@@ -140,6 +173,15 @@ export class HoneywellModbusRTUClient {
     this.cleanup();
 
     return new Promise((resolve, reject) => {
+      let finished = false;
+      const timeout = setTimeout(() => {
+        if (!finished) {
+          finished = true;
+          this.cleanup();
+          reject(new Error(`Timeout de conexión Modbus RTU en ${this.path}`));
+        }
+      }, 4000);
+
       try {
         this.serialport = new SerialPort({
           path: this.path,
@@ -154,15 +196,23 @@ export class HoneywellModbusRTUClient {
         this.client = new RTUClient(this.serialport, this.slaveId);
 
         this.serialport.open((err) => {
-          if (err) {
-            this.cleanup();
-            reject(err);
-          } else {
-            resolve(true);
+          if (!finished) {
+            finished = true;
+            clearTimeout(timeout);
+            if (err) {
+              this.cleanup();
+              reject(err);
+            } else {
+              resolve(true);
+            }
           }
         });
       } catch (err) {
-        reject(err);
+        if (!finished) {
+          finished = true;
+          clearTimeout(timeout);
+          reject(err);
+        }
       }
     });
   }
@@ -184,9 +234,14 @@ export class HoneywellModbusRTUClient {
 
     try {
       await this.connect();
-      const response = await this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
+      const readPromise = this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout de lectura Modbus RTU')), 3000)
+      );
 
-      if (response && response.response && response.response.body.valuesAsArray.length > 0) {
+      const response = await Promise.race([readPromise, timeoutPromise]);
+
+      if (response && response.response && response.response.body && response.response.body.valuesAsArray.length > 0) {
         return response.response.body.valuesAsArray[0] / 10.0;
       }
       throw new Error('No data received');
@@ -206,7 +261,12 @@ export class HoneywellModbusRTUClient {
 
     try {
       await this.connect();
-      await this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
+      const writePromise = this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout de escritura Modbus RTU')), 3000)
+      );
+
+      await Promise.race([writePromise, timeoutPromise]);
       return true;
     } catch (err) {
       this.cleanup(); // Liberar puerto serie dañado
