@@ -126,12 +126,24 @@ export const controller = {
         let desiredOn = false;
         let activeSetpoint = dev.setpoint != null ? Number(dev.setpoint) : null;
         
-        // Verificación de anulación manual (ej. fecha manual en el futuro)
+        // Verificación de anulación manual
         const currentState = db.getDeviceState(dev.id);
-        const manualDate = dev.manual_date || currentState.manual_date || null;
-        const nowStr = moment().tz(config.TIMEZONE).format(config.DATE_TIME_FORMAT);
-        const manualActive = manualDate && nowStr < manualDate;
-        const manualOn = dev.manual_on !== undefined ? dev.manual_on : (currentState.manual_on !== undefined ? currentState.manual_on : true);
+        const isExplicitAuto = currentState.mode === 'auto' || dev.mode === 'auto';
+        const isExplicitManual = currentState.mode === 'manual' || dev.mode === 'manual';
+        
+        let manualActive = false;
+        const manualOn = currentState.manual_on !== undefined ? currentState.manual_on : (dev.manual_on !== undefined ? dev.manual_on : (currentState.on !== undefined ? currentState.on : false));
+
+        if (!isExplicitAuto) {
+          const manualDate = dev.manual_date || currentState.manual_date || null;
+          if (manualDate) {
+            const nowStr = moment().tz(config.TIMEZONE).format(config.DATE_TIME_FORMAT);
+            manualActive = nowStr < manualDate;
+          } else if (isExplicitManual) {
+            // Modo manual permanente: no expira automáticamente
+            manualActive = true;
+          }
+        }
 
         if (manualActive) {
           desiredOn = manualOn;
@@ -405,12 +417,24 @@ export const controller = {
       return;
     }
 
-    if (state.on !== undefined) {
-      const manualDate = moment().tz(config.TIMEZONE).add(1, 'hour').format(config.DATE_TIME_FORMAT);
-      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: state.on });
+    if (state.mode === 'auto' || state.clear_manual === true || state.auto === true) {
+      db.saveDeviceState(deviceId, { manual_date: null, manual_on: null, mode: 'auto' });
+      dev.manual_date = null;
+      dev.manual_on = null;
+      dev.mode = 'auto';
+      db.writeDeviceLog(deviceId, 'Comando instantáneo recibido: restaurar modo AUTOMÁTICO (por horario)');
+      logger.info(`Dispositivo ${dev.name} restablecido a modo AUTOMÁTICO (por horario).`, 'CTRL');
+      await controller.run();
+    } else if (state.on !== undefined) {
+      let manualDate = null;
+      if (state.timer) {
+        manualDate = moment().tz(config.TIMEZONE).add(Number(state.timer), 'minutes').format(config.DATE_TIME_FORMAT);
+      }
+      db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: state.on, mode: 'manual', on: state.on });
       dev.manual_date = manualDate;
       dev.manual_on = state.on;
-      db.writeDeviceLog(deviceId, `Comando instantáneo recibido: forzar estado a ${state.on ? 'ENCENDIDO' : 'APAGADO'}`);
+      dev.mode = 'manual';
+      db.writeDeviceLog(deviceId, `Comando instantáneo recibido: forzar estado a ${state.on ? 'ENCENDIDO' : 'APAGADO'}${state.timer ? ` (temporizador por ${state.timer} min)` : ' (modo manual)'}`);
       await controller.run();
     }
   },
