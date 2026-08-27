@@ -1,13 +1,27 @@
 {
   "name": "raspcontrol-v3",
   "version": "3.0.0",
-  "description": "ESM Industries Next-Gen Raspberry Pi Hardware Controller",
+  "description": "Industrial Raspberry Pi IoT Hardware Controller & Edge Gateway",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop raspcontrol-v3",
+    "pm2:restart": "pm2 restart raspcontrol-v3",
+    "pm2:logs": "pm2 logs raspcontrol-v3"
   },
+  "keywords": [
+    "iot",
+    "raspberry-pi",
+    "modbus",
+    "hvac",
+    "gpio",
+    "edge-gateway",
+    "websocket"
+  ],
+  "license": "MIT",
   "dependencies": {
     "dotenv": "^16.4.5",
     "moment-timezone": "^0.5.45",
@@ -21,6 +35,5 @@
   },
   "devDependencies": {
     "nodemon": "^3.1.0"
-  },
-  "private": true
+  }
 }
