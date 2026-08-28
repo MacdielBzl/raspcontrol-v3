@@ -42,10 +42,20 @@ git clone https://github.com/TU_USUARIO/raspcontrol-v3.git
 cd raspcontrol-v3
 ```
 
-### 2. Instalar dependencias del sistema y de Node.js
+### 2. Configuración y Dependencias Automatizadas
+Puedes ejecutar el script de aprovisionamiento del módulo:
 ```bash
-# Dependencias necesarias para compilar librerías nativas (onoff, serialport, i2c)
-sudo apt update && sudo apt install -y build-essential python3
+chmod +x *.sh
+./setup.sh
+```
+
+O realizar la instalación manual:
+```bash
+# Si npm no está instalado en el sistema:
+sudo apt update && sudo apt install -y nodejs npm build-essential
+
+# O actualizar mediante el orchestrator first-run:
+sudo ../first-run/first-run.sh update
 
 # Instalar dependencias de Node
 npm install
