@@ -36,8 +36,12 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 log "✅ NPM detectado: v$(npm --version)"
 
-# 3. Crear directorio de logs
+# 3. Crear y asegurar permisos del directorio de logs
 mkdir -p "${SCRIPT_DIR}/logs"
+if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  chown -R "${SUDO_USER}:${SUDO_USER}" "${SCRIPT_DIR}" 2>/dev/null || true
+fi
+chmod -R 775 "${SCRIPT_DIR}/logs" 2>/dev/null || true
 
 # 4. Asegurar archivo .env
 if [[ ! -f "${SCRIPT_DIR}/.env" ]]; then
