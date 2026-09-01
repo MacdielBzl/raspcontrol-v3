@@ -472,7 +472,10 @@ export const controller = {
         manualDate = moment().tz(config.TIMEZONE).add(Number(state.timer), 'minutes').format(config.DATE_TIME_FORMAT);
       }
       
-      const targetOn = state.on !== undefined ? Boolean(state.on) : (state.mode === 'off' ? false : true);
+      const currentState = db.getDeviceState(deviceId);
+      const targetOn = state.on !== undefined 
+        ? Boolean(state.on) 
+        : (state.mode === 'off' ? false : (currentState.on !== undefined ? currentState.on : (dev.manual_on !== null && dev.manual_on !== undefined ? dev.manual_on : (dev.state?.on || false))));
       const targetMode = state.mode || (state.on !== undefined ? 'manual' : dev.mode || 'manual');
 
       db.saveDeviceState(deviceId, { manual_date: manualDate, manual_on: targetOn, mode: targetMode });
