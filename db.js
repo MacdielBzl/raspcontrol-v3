@@ -15,6 +15,20 @@ let dataStore = {
   offlineTelemetry: []
 };
 
+// In-memory buffer for device logs to protect SD card NAND flash from continuous wear
+const logBuffer = [];
+let logFlushTimer = null;
+const LOG_FLUSH_INTERVAL_MS = 5000;
+const MAX_BUFFERED_LOGS = 50;
+
+function scheduleLogFlush() {
+  if (logFlushTimer) return;
+  logFlushTimer = setTimeout(() => {
+    logFlushTimer = null;
+    db.flushLogs();
+  }, LOG_FLUSH_INTERVAL_MS);
+}
+
 export const db = {
   /**
    * Initializes the JSON database, loading it from disk if it exists.
@@ -44,28 +58,32 @@ export const db = {
   },
 
   /**
-   * Safely writes the current dataStore to disk.
+   * Safely and atomically writes the current dataStore to disk.
    */
   save: () => {
+    const tempPath = `${config.JSON_DB_PATH}.tmp`;
     try {
-      const tempPath = `${config.JSON_DB_PATH}.tmp`;
       const dataStr = JSON.stringify(dataStore, null, 2);
-      
       fs.writeFileSync(tempPath, dataStr, 'utf-8');
       
-      if (fs.existsSync(config.JSON_DB_PATH)) {
-        fs.unlinkSync(config.JSON_DB_PATH);
+      // Atomic rename: On POSIX/Linux, renameSync atomically replaces the destination.
+      // We do NOT call unlinkSync first to prevent data loss in case of sudden power cuts.
+      try {
+        fs.renameSync(tempPath, config.JSON_DB_PATH);
+      } catch (renameErr) {
+        // Fallback for Windows file-locking or cross-device edge cases
+        fs.copyFileSync(tempPath, config.JSON_DB_PATH);
+        if (fs.existsSync(tempPath)) {
+          try { fs.unlinkSync(tempPath); } catch {}
+        }
       }
-      fs.renameSync(tempPath, config.JSON_DB_PATH);
-      logger.debug('Base de datos escrita en el disco.', 'DB');
+      logger.debug('Base de datos guardada de forma atómica en disco.', 'DB');
     } catch (error) {
-      // Fallback direct write in case of Windows locking errors or permission limits
+      logger.error('Fallo al guardar la base de datos en el disco.', error, 'DB');
+      // Emergency fallback direct write
       try {
         fs.writeFileSync(config.JSON_DB_PATH, JSON.stringify(dataStore, null, 2), 'utf-8');
-        logger.debug('Base de datos escrita en el disco mediante respaldo directo.', 'DB');
-      } catch (writeErr) {
-        logger.error('Fallo al guardar la base de datos en el disco.', writeErr, 'DB');
-      }
+      } catch {}
     }
   },
 
@@ -77,6 +95,7 @@ export const db = {
     
     const oldDevices = dataStore.manifest.devices || [];
     const newDevices = manifestData.devices || [];
+    const nowStr = moment().tz(config.TIMEZONE).format(config.DATE_TIME_FORMAT);
     
     // Apagar relevadores de dispositivos que fueron removidos o desvinculados del manifiesto
     oldDevices.forEach(oldDev => {
@@ -121,14 +140,25 @@ export const db = {
         db.writeDeviceLog(newDev.id, msg);
       }
 
-      // Reconciliar estado runtime
+      // Reconciliar estado runtime preservando temporizadores manuales activos
       const existingState = dataStore.deviceStates[newDev.id] || {};
+      const hasActiveManualTimer = existingState.manual_date && nowStr < existingState.manual_date;
+
       if (newDev.status === 'disabled' || newDev.status === 'inactive' || newDev.status === 'off') {
         dataStore.deviceStates[newDev.id] = {
           ...existingState,
           mode: 'off',
           manual_date: null,
           manual_on: false,
+          lastActiveSetpoint: newDev.setpoint ?? existingState.lastActiveSetpoint
+        };
+      } else if (hasActiveManualTimer) {
+        // Preservar la anulación manual temporal activa
+        dataStore.deviceStates[newDev.id] = {
+          ...existingState,
+          mode: existingState.mode || 'manual',
+          manual_date: existingState.manual_date,
+          manual_on: existingState.manual_on,
           lastActiveSetpoint: newDev.setpoint ?? existingState.lastActiveSetpoint
         };
       } else if (newDev.mode === 'auto' && !newDev.manual_date) {
@@ -212,7 +242,6 @@ export const db = {
     };
 
     // Mitigación de desgaste de tarjeta SD: Solo guardar físicamente en disco ante cambios de estado críticos.
-    // Evitamos guardar si solo cambia la lectura de temperatura o el estado del sensor.
     const criticalKeys = ['on', 'compressorOn', 'manual_on', 'manual_date', 'lastActiveSetpoint', 'lastTurnedOff', 'lastCompressorOff'];
     const hasCriticalChange = Object.keys(state).some(key => {
       return criticalKeys.includes(key) && oldState[key] !== state[key];
@@ -270,32 +299,64 @@ export const db = {
   },
 
   /**
-   * Escribe una entrada en el archivo de log específico de un dispositivo.
+   * Enqueues a log entry with batch buffering to prevent SD card wear.
    */
   writeDeviceLog: (deviceId, message) => {
+    const timestamp = moment().tz(config.TIMEZONE).format('YYYY-MM-DD HH:mm:ss.SSS');
+    logBuffer.push({ deviceId, entry: `[${timestamp}] ${message}\n` });
+
+    if (logBuffer.length >= MAX_BUFFERED_LOGS) {
+      db.flushLogs();
+    } else {
+      scheduleLogFlush();
+    }
+  },
+
+  /**
+   * Flushes buffered device log entries to disk in batch with file size rotation.
+   */
+  flushLogs: () => {
+    if (logFlushTimer) {
+      clearTimeout(logFlushTimer);
+      logFlushTimer = null;
+    }
+    if (logBuffer.length === 0) return;
+
+    const entriesToFlush = logBuffer.splice(0, logBuffer.length);
+    const logsByDevice = {};
+
+    entriesToFlush.forEach(item => {
+      if (!logsByDevice[item.deviceId]) logsByDevice[item.deviceId] = [];
+      logsByDevice[item.deviceId].push(item.entry);
+    });
+
     try {
       const logsDir = path.join(path.dirname(config.JSON_DB_PATH), 'logs');
       if (!fs.existsSync(logsDir)) {
         fs.mkdirSync(logsDir, { recursive: true });
       }
-      const logFile = path.join(logsDir, `dispositivo_${deviceId}.log`);
 
-      // Rotación de logs: Limitar el archivo a 1MB
-      if (fs.existsSync(logFile)) {
-        const stats = fs.statSync(logFile);
-        if (stats.size > 1024 * 1024) { // 1MB
-          const backupFile = `${logFile}.1`;
-          if (fs.existsSync(backupFile)) {
-            fs.unlinkSync(backupFile);
-          }
-          fs.renameSync(logFile, backupFile);
+      for (const [deviceId, lines] of Object.entries(logsByDevice)) {
+        const logFile = path.join(logsDir, `dispositivo_${deviceId}.log`);
+
+        // Log file rotation at 1MB
+        if (fs.existsSync(logFile)) {
+          try {
+            const stats = fs.statSync(logFile);
+            if (stats.size > 1024 * 1024) {
+              const backupFile = `${logFile}.1`;
+              if (fs.existsSync(backupFile)) {
+                try { fs.unlinkSync(backupFile); } catch {}
+              }
+              fs.renameSync(logFile, backupFile);
+            }
+          } catch {}
         }
-      }
 
-      const timestamp = moment().tz(config.TIMEZONE).format('YYYY-MM-DD HH:mm:ss.SSS');
-      fs.appendFileSync(logFile, `[${timestamp}] ${message}\n`, 'utf-8');
+        fs.appendFileSync(logFile, lines.join(''), 'utf-8');
+      }
     } catch (err) {
-      logger.error(`Error al escribir log del dispositivo ${deviceId}`, err, 'DB');
+      logger.error('Error al volcar logs de dispositivos en disco:', err, 'DB');
     }
   }
 };

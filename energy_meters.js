@@ -2,10 +2,11 @@
  * Energy Meters Modbus RTU Acquisition Module
  * 
  * Handles Modbus RTU communication with energy meters (UPM309, UEM1P5, MFM384, etc.)
- * over RS485 serial ports.
+ * over RS485 serial ports with concurrency lock.
  */
 import fs from 'fs';
 import logger from './logger.js';
+import { withSerialLock } from './modbus_honeywell.js';
 
 let Modbus = null;
 let SerialPort = null;
@@ -241,71 +242,7 @@ function generateMockData(profileName) {
 }
 
 /**
- * Scans for serial ports and connects to the Modbus client.
- */
-async function getModbusClient() {
-  if (!isModbusAvailable || process.platform === 'win32') {
-    return { client: null, serialport: null, connected: false };
-  }
-  
-  // Discover serial ports automatically
-  let ports = [];
-  try {
-    ports = fs.readdirSync('/dev')
-      .filter(file => file.startsWith('ttyUSB') || file.startsWith('ttyACM'))
-      .map(file => `/dev/${file}`)
-      .sort();
-  } catch (err) {
-    logger.warn(`Error al leer el directorio /dev: ${err.message}`, 'ENERGY');
-  }
-  
-  if (ports.length === 0) {
-    logger.warn('No se encontraron puertos seriales (/dev/ttyUSB* o /dev/ttyACM*).', 'ENERGY');
-    return { client: null, serialport: null, connected: false };
-  }
-  
-  for (const dev of ports) {
-    try {
-      logger.info(`Intentando conectar puerto serial Modbus: ${dev}...`, 'ENERGY');
-      
-      const serialport = new SerialPort({
-        path: dev,
-        baudRate: 9600,
-        dataBits: 8,
-        stopBits: 1,
-        parity: 'none',
-        autoOpen: false
-      });
-      
-      const opened = await new Promise((resolve) => {
-        serialport.open((err) => {
-          if (err) {
-            logger.debug(`Error al abrir puerto ${dev}: ${err.message}`, 'ENERGY');
-            resolve(false);
-          } else {
-            resolve(true);
-          }
-        });
-      });
-      
-      if (opened) {
-        const RTUClient = Modbus.client?.RTU || Modbus.default?.client?.RTU || Modbus.client;
-        // The slave/unit ID will be set dynamically per request, but we initialize with 1
-        const client = new RTUClient(serialport, 1);
-        
-        logger.success(`Conectado a puerto serial Modbus: ${dev}`, 'ENERGY');
-        return { client, serialport, connected: true };
-      }
-    } catch (err) {
-      logger.error(`Error de conexión en puerto ${dev}:`, err, 'ENERGY');
-    }
-  }
-  
-  return { client: null, serialport: null, connected: false };
-}
-
-/**
- * Main function to read all energy meters from the manifest.
+ * Main function to read all energy meters from the manifest with serial port locking.
  */
 export async function readAllMeters(devices) {
   const energyDevices = devices.filter(d => d.type === 'energy_meter');
@@ -336,67 +273,99 @@ export async function readAllMeters(devices) {
     return results;
   }
   
-  // Real Modbus RTU execution
-  const { client, serialport, connected } = await getModbusClient();
+  // Real Modbus RTU execution with port discovery
+  let ports = [];
+  try {
+    ports = fs.readdirSync('/dev')
+      .filter(file => file.startsWith('ttyUSB') || file.startsWith('ttyACM'))
+      .map(file => `/dev/${file}`)
+      .sort();
+  } catch (err) {
+    logger.warn(`Error al leer el directorio /dev: ${err.message}`, 'ENERGY');
+  }
   
-  if (!connected || !client) {
-    logger.warn('No se pudo establecer conexión Modbus física. Saltando este ciclo.', 'ENERGY');
+  if (ports.length === 0) {
+    logger.warn('No se encontraron puertos seriales (/dev/ttyUSB* o /dev/ttyACM*).', 'ENERGY');
     return [];
   }
-  
-  try {
-    for (const dev of energyDevices) {
-      // Determine Profile
-      const profileName = dev.config?.model || dev.config?.meterModel || 'UPM309';
-      const profile = PROFILES[profileName] || PROFILES.UPM309;
-      
-      // Determine Slave/Unit ID
-      const slaveId = dev.config?.slaveId || dev.config?.unit || dev.config?.address || 1;
-      
-      logger.info(`Leyendo medidor ${dev.name} (Modelo: ${profileName}, Esclavo: ${slaveId})...`, 'ENERGY');
-      
-      // Set the slave ID on the Modbus client dynamically
-      client.setID(slaveId);
-      
-      try {
-        const readings = await readDeviceModbus(client, profile, slaveId);
-        if (readings && Object.keys(readings).length > 0) {
-          results.push({
-            deviceId: dev.id,
-            esmM: dev.esmM,
-            externalId: dev.externalId,
-            data: readings
-          });
-          logger.success(`Medidor ${dev.name} (esmM: ${dev.esmM}) leído con éxito.`, 'ENERGY');
-        } else {
-          logger.warn(`No se obtuvieron datos para el medidor ${dev.name} (esmM: ${dev.esmM}).`, 'ENERGY');
+
+  const primaryPort = ports[0];
+
+  return await withSerialLock(primaryPort, async () => {
+    let serialport = null;
+    let client = null;
+
+    try {
+      logger.info(`Conectando puerto serial Modbus bajo bloqueo: ${primaryPort}...`, 'ENERGY');
+      serialport = new SerialPort({
+        path: primaryPort,
+        baudRate: 9600,
+        dataBits: 8,
+        stopBits: 1,
+        parity: 'none',
+        autoOpen: false
+      });
+
+      const opened = await new Promise((resolve) => {
+        serialport.open((err) => {
+          if (err) {
+            logger.debug(`Error al abrir puerto ${primaryPort}: ${err.message}`, 'ENERGY');
+            resolve(false);
+          } else {
+            resolve(true);
+          }
+        });
+      });
+
+      if (!opened) {
+        logger.warn(`No se pudo abrir ${primaryPort} para medidores.`, 'ENERGY');
+        return [];
+      }
+
+      const RTUClient = Modbus.client?.RTU || Modbus.default?.client?.RTU || Modbus.client;
+      client = new RTUClient(serialport, 1);
+
+      for (const dev of energyDevices) {
+        const profileName = dev.config?.model || dev.config?.meterModel || 'UPM309';
+        const profile = PROFILES[profileName] || PROFILES.UPM309;
+        const slaveId = dev.config?.slaveId || dev.config?.unit || dev.config?.address || 1;
+        
+        logger.info(`Leyendo medidor ${dev.name} (Modelo: ${profileName}, Esclavo: ${slaveId})...`, 'ENERGY');
+        client.setID(slaveId);
+        
+        try {
+          const readings = await readDeviceModbus(client, profile, slaveId);
+          if (readings && Object.keys(readings).length > 0) {
+            results.push({
+              deviceId: dev.id,
+              esmM: dev.esmM,
+              externalId: dev.externalId,
+              data: readings
+            });
+            logger.success(`Medidor ${dev.name} (esmM: ${dev.esmM}) leído con éxito.`, 'ENERGY');
+          } else {
+            logger.warn(`No se obtuvieron datos para el medidor ${dev.name} (esmM: ${dev.esmM}).`, 'ENERGY');
+          }
+        } catch (devErr) {
+          logger.error(`Error leyendo dispositivo ${dev.name}:`, devErr, 'ENERGY');
         }
-      } catch (devErr) {
-        logger.error(`Error leyendo dispositivo ${dev.name}:`, devErr, 'ENERGY');
+      }
+    } catch (err) {
+      logger.error('Error general durante la lectura de medidores:', err, 'ENERGY');
+    } finally {
+      if (serialport && serialport.isOpen) {
+        await new Promise((resolve) => {
+          try {
+            serialport.close(() => resolve());
+          } catch {
+            resolve();
+          }
+        });
       }
     }
-  } finally {
-    // Gracefully close serial port asynchronously
-    if (serialport && serialport.isOpen) {
-      await new Promise((resolve) => {
-        try {
-          serialport.close((err) => {
-            if (err) {
-              logger.error('Error cerrando puerto serial Modbus:', err, 'ENERGY');
-            } else {
-              logger.debug('Puerto serial Modbus cerrado con éxito.', 'ENERGY');
-            }
-            resolve();
-          });
-        } catch (closeErr) {
-          logger.error('Excepción al cerrar puerto serial Modbus:', closeErr, 'ENERGY');
-          resolve();
-        }
-      });
-    }
-  }
-  
-  return results;
+
+    return results;
+  });
 }
 
 export default {

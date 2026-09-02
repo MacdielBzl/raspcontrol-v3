@@ -91,18 +91,28 @@ function shutdown(exitCode = 0) {
   if (energyInterval) clearInterval(energyInterval);
   if (manifestInterval) clearInterval(manifestInterval);
   
-  // Clean up pins
+  // Clean up pins and ensure all relays (fan + compressor) are safely opened/de-energized
   try {
-    hardware.releaseSelectorPins();
-    
-    // Release any exported GPIO relay instances
     const devices = db.getDevices();
     devices.forEach(dev => {
       if (dev.pin != null) {
-        const relay = new hardware.GpioRelay(dev.pin, dev.device_id);
-        relay.release();
+        try {
+          const relay = new hardware.GpioRelay(dev.pin, dev.device_id, !dev.active_high);
+          relay.write(1); // 1 = APAGADO
+          relay.release();
+        } catch {}
+      }
+      if (dev.compressorPin != null) {
+        try {
+          const compRelay = new hardware.GpioRelay(dev.compressorPin, dev.device_id, !dev.active_high);
+          compRelay.write(1); // 1 = APAGADO
+          compRelay.release();
+        } catch {}
       }
     });
+
+    hardware.releaseAll();
+    db.flushLogs();
   } catch (err) {
     logger.error('Ocurrió un error al liberar los recursos de hardware', err, 'SYS');
   }

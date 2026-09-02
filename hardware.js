@@ -25,6 +25,9 @@ const GPIOB = 0x13; // Output state register Port B
 let portAState = 0xFF;
 let portBState = 0xFF;
 
+// Cache detected working CLI driver to prevent blocking the event loop with repeated failed execSync calls
+let detectedCliDriver = null; // 'pinctrl' | 'sudo-pinctrl' | 'gpioset-0' | 'gpioset-4' | 'raspi-gpio' | 'sudo-raspi-gpio' | 'none'
+
 if (process.platform === 'win32') {
   isMockHardware = true;
 }
@@ -58,44 +61,66 @@ if (!isMockHardware) {
   }
 }
 
+// Global active relay registry to avoid duplicate Gpio exports and EBUSY collisions
+const activeRelayRegistry = new Map();
+
 /**
  * GPIO, MCP23017 & Modbus Honeywell Hybrid Relay Controller
  */
 export class GpioRelay {
-  constructor(pin, deviceId = null) {
+  constructor(pin, deviceId = null, activeLow = true) {
     this.pin = Number(pin);
     this.deviceId = deviceId; // deviceId acts as Modbus IP if pin >= 200
     this.isI2C = this.pin >= 100 && this.pin < 200;
     this.isModbus = this.pin >= 200;
     this.mcpPin = this.isI2C ? this.pin - 100 : this.pin;
+    this.activeLow = activeLow !== false; // Default: Active-Low (0 = ON, 1 = OFF)
     this.gpio = null;
     this.hasBeenWritten = false;
+    this.lastWrittenLevel = null;
 
-    if (!isMockHardware) {
-      if (!this.isI2C && !this.isModbus) {
+    const registryKey = `${this.pin}-${this.deviceId || ''}`;
+    if (activeRelayRegistry.has(registryKey)) {
+      const existing = activeRelayRegistry.get(registryKey);
+      this.gpio = existing.gpio;
+      this.hasBeenWritten = existing.hasBeenWritten;
+      this.lastWrittenLevel = existing.lastWrittenLevel;
+    } else {
+      if (!isMockHardware && !this.isI2C && !this.isModbus) {
         try {
           if (Gpio) {
-            this.gpio = new Gpio(this.pin, 'out');
+            // Safe initial state: 'high' (3.3V) prevents relay glitch for Active-Low relays on startup
+            const initialDirection = this.activeLow ? 'high' : 'low';
+            this.gpio = new Gpio(this.pin, initialDirection);
           }
         } catch (err) {
           logger.debug(`onoff (sysfs) no disponible para el pin ${this.pin} (${err.message}). Se usará controlador nativo alternativo (pinctrl/gpiod).`, 'HW');
         }
       }
+      activeRelayRegistry.set(registryKey, this);
     }
   }
 
   write(value) {
     this.hasBeenWritten = true;
+    
+    // Normalize logical ON/OFF: 0 = ON, 1 = OFF (or boolean true = ON, false = OFF)
+    const isLogicalOn = value === 0 || value === true || value === '0' || value === 'true';
+    
+    // Calculate physical level (Active-Low: 0V=ON, 3.3V=OFF. Active-High: 3.3V=ON, 0V=OFF)
+    const physicalLevel = this.activeLow ? (isLogicalOn ? 0 : 1) : (isLogicalOn ? 1 : 0);
+    this.lastWrittenLevel = physicalLevel;
+
     if (isMockHardware) {
       if (this.isModbus) {
         const isRTU = this.deviceId && (this.deviceId.startsWith('/dev/') || this.deviceId.includes('tty') || this.deviceId.includes('COM'));
         if (isRTU) {
-          logger.hw(`[MOCK Modbus RTU] Escribiendo Relevador (valor: ${value === 0 ? 'ENCENDIDO' : 'APAGADO'}) en el Termostato Honeywell serie: ${this.deviceId}`, 'HW');
+          logger.hw(`[MOCK Modbus RTU] Escribiendo Relevador (valor: ${isLogicalOn ? 'ENCENDIDO' : 'APAGADO'}) en el Termostato Honeywell serie: ${this.deviceId}`, 'HW');
         } else {
-          logger.hw(`[MOCK Modbus TCP] Escribiendo Relevador (valor: ${value === 0 ? 'ENCENDIDO' : 'APAGADO'}) en el Termostato Honeywell IP: ${this.deviceId}`, 'HW');
+          logger.hw(`[MOCK Modbus TCP] Escribiendo Relevador (valor: ${isLogicalOn ? 'ENCENDIDO' : 'APAGADO'}) en el Termostato Honeywell IP: ${this.deviceId}`, 'HW');
         }
       } else {
-        logger.hw(`[SIMULACIÓN ${this.isI2C ? 'I2C MCP23017' : 'GPIO'}] Pin ${this.pin} (McpPin: ${this.mcpPin}) establecido en ${value === 0 ? '0 (ENCENDIDO)' : '1 (APAGADO)'}`, 'HW');
+        logger.hw(`[SIMULACIÓN ${this.isI2C ? 'I2C MCP23017' : 'GPIO'}] Pin ${this.pin} (McpPin: ${this.mcpPin}) establecido en ${physicalLevel} (${isLogicalOn ? 'ENCENDIDO' : 'APAGADO'})`, 'HW');
       }
       return;
     }
@@ -107,7 +132,7 @@ export class GpioRelay {
       if (isRTU) {
         import('./modbus_honeywell.js').then(({ getModbusRTUClient }) => {
           const client = getModbusRTUClient(this.deviceId);
-          client.writeSystemMode(value === 0).catch(err => {
+          client.writeSystemMode(isLogicalOn).catch(err => {
             logger.error(`[Error Modbus RTU] Fallo al escribir el modo de sistema en ${this.deviceId}`, err, 'HW');
           });
         }).catch(err => {
@@ -116,7 +141,7 @@ export class GpioRelay {
       } else if (isTCP) {
         import('./modbus_honeywell.js').then(({ getModbusTCPClient }) => {
           const client = getModbusTCPClient(this.deviceId);
-          client.writeSystemMode(value === 0).catch(err => {
+          client.writeSystemMode(isLogicalOn).catch(err => {
             logger.error(`[Error Modbus TCP] Fallo al escribir el modo de sistema en ${this.deviceId}`, err, 'HW');
           });
         }).catch(err => {
@@ -132,10 +157,10 @@ export class GpioRelay {
         const register = isPortB ? GPIOB : GPIOA;
         let currentState = isPortB ? portBState : portAState;
 
-        if (value === 0) {
-          currentState &= ~(1 << bitPosition); // Set bit low (ON for active-low)
+        if (physicalLevel === 0) {
+          currentState &= ~(1 << bitPosition); // Set bit low
         } else {
-          currentState |= (1 << bitPosition);  // Set bit high (OFF for active-low)
+          currentState |= (1 << bitPosition);  // Set bit high
         }
 
         if (isPortB) {
@@ -150,73 +175,81 @@ export class GpioRelay {
       }
     } else if (this.gpio) {
       try {
-        this.gpio.writeSync(value);
+        this.gpio.writeSync(physicalLevel);
       } catch (err) {
         logger.error(`[Error GPIO] Fallo al escribir el pin ${this.pin} con onoff (${err.message}). Recurriendo a controladores CLI...`, null, 'HW');
         this.gpio = null;
-        this.writeCli(value);
+        this.writeCli(physicalLevel);
       }
     } else {
-      this.writeCli(value);
+      this.writeCli(physicalLevel);
     }
   }
 
-  writeCli(value) {
-    // Driver CLI alternativo (pinctrl / gpioset / raspi-gpio) para Bookworm y Raspberry Pi 5
+  writeCli(physicalLevel) {
+    // Driver CLI alternativo (pinctrl / gpioset / raspi-gpio) optimizado con detección en caché
     const execOpts = { encoding: 'utf-8', timeout: 1000, stdio: ['pipe', 'pipe', 'pipe'] };
-    const levelStr = value === 0 ? 'dl' : 'dh'; // active low / active high
-    const levelBit = value === 0 ? 0 : 1;
-    let written = false;
+    const levelStr = physicalLevel === 0 ? 'dl' : 'dh'; // active low / active high
+    const levelBit = physicalLevel === 0 ? 0 : 1;
 
-    // 1. Probar pinctrl (Estándar oficial en Raspberry Pi OS Bookworm)
-    try {
-      execSync(`pinctrl set ${this.pin} op ${levelStr}`, execOpts);
-      written = true;
-    } catch {
+    // Si ya detectamos un controlador que funciona, usarlo directamente sin probar todos
+    if (detectedCliDriver && detectedCliDriver !== 'none') {
       try {
-        execSync(`sudo pinctrl set ${this.pin} op ${levelStr}`, execOpts);
-        written = true;
+        switch (detectedCliDriver) {
+          case 'pinctrl':
+            execSync(`pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+            return;
+          case 'sudo-pinctrl':
+            execSync(`sudo pinctrl set ${this.pin} op ${levelStr}`, execOpts);
+            return;
+          case 'gpioset-0':
+            execSync(`gpioset 0 ${this.pin}=${levelBit}`, execOpts);
+            return;
+          case 'gpioset-4':
+            execSync(`gpioset 4 ${this.pin}=${levelBit}`, execOpts);
+            return;
+          case 'sudo-gpioset-0':
+            execSync(`sudo gpioset 0 ${this.pin}=${levelBit}`, execOpts);
+            return;
+          case 'sudo-gpioset-4':
+            execSync(`sudo gpioset 4 ${this.pin}=${levelBit}`, execOpts);
+            return;
+          case 'raspi-gpio':
+            execSync(`raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
+            return;
+          case 'sudo-raspi-gpio':
+            execSync(`sudo raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
+            return;
+        }
+      } catch {
+        // Si falló el driver en caché, invalidar y re-escanear
+        detectedCliDriver = null;
+      }
+    }
+
+    // Proceso de autodetección inicial
+    const candidates = [
+      { name: 'pinctrl', cmd: `pinctrl set ${this.pin} op ${levelStr}` },
+      { name: 'sudo-pinctrl', cmd: `sudo pinctrl set ${this.pin} op ${levelStr}` },
+      { name: 'gpioset-0', cmd: `gpioset 0 ${this.pin}=${levelBit}` },
+      { name: 'gpioset-4', cmd: `gpioset 4 ${this.pin}=${levelBit}` },
+      { name: 'sudo-gpioset-0', cmd: `sudo gpioset 0 ${this.pin}=${levelBit}` },
+      { name: 'sudo-gpioset-4', cmd: `sudo gpioset 4 ${this.pin}=${levelBit}` },
+      { name: 'raspi-gpio', cmd: `raspi-gpio set ${this.pin} op ${levelStr}` },
+      { name: 'sudo-raspi-gpio', cmd: `sudo raspi-gpio set ${this.pin} op ${levelStr}` }
+    ];
+
+    for (const cand of candidates) {
+      try {
+        execSync(cand.cmd, execOpts);
+        detectedCliDriver = cand.name;
+        logger.success(`[GPIO CLI] Controlador detectado y enrutado: ${cand.name}`, 'HW');
+        return;
       } catch { }
     }
 
-    // 2. Probar gpioset (gpiod en Linux kernel 6.x+)
-    if (!written) {
-      const gpiosetAttempts = [
-        `gpioset 0 ${this.pin}=${levelBit}`,
-        `gpioset 4 ${this.pin}=${levelBit}`,
-        `gpioset -c 0 ${this.pin}=${levelBit}`,
-        `gpioset -c 4 ${this.pin}=${levelBit}`,
-        `sudo gpioset 0 ${this.pin}=${levelBit}`,
-        `sudo gpioset 4 ${this.pin}=${levelBit}`,
-        `sudo gpioset -c 0 ${this.pin}=${levelBit}`,
-        `sudo gpioset -c 4 ${this.pin}=${levelBit}`
-      ];
-
-      for (const cmd of gpiosetAttempts) {
-        try {
-          execSync(cmd, execOpts);
-          written = true;
-          break;
-        } catch { }
-      }
-    }
-
-    // 3. Probar raspi-gpio (Raspberry Pi OS Bullseye/Buster)
-    if (!written) {
-      try {
-        execSync(`raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
-        written = true;
-      } catch {
-        try {
-          execSync(`sudo raspi-gpio set ${this.pin} op ${levelStr}`, execOpts);
-          written = true;
-        } catch { }
-      }
-    }
-
-    if (!written) {
-      logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
-    }
+    detectedCliDriver = 'none';
+    logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
   }
 
   release() {
@@ -228,7 +261,24 @@ export class GpioRelay {
         this.gpio.unexport();
       } catch { }
     }
+    const registryKey = `${this.pin}-${this.deviceId || ''}`;
+    activeRelayRegistry.delete(registryKey);
   }
+}
+
+/**
+ * Safely releases all active relays and selector pins across the system.
+ */
+export function releaseAll() {
+  releaseSelectorPins();
+  for (const [key, relay] of activeRelayRegistry.entries()) {
+    try {
+      relay.release();
+    } catch (err) {
+      logger.error(`Error al liberar relevador ${key}:`, err, 'HW');
+    }
+  }
+  activeRelayRegistry.clear();
 }
 
 /**
@@ -320,7 +370,7 @@ export async function getTemperature(sensorId) {
         const { getModbusRTUClient } = await import('./modbus_honeywell.js');
         const client = getModbusRTUClient(sensorId);
         const temp = await client.readTemperature();
-        const response = { success: temp !== 999, temperature: temp, status: temp !== 999 ? 'OK' : 'MODBUS_ERROR' };
+        const response = { success: temp !== 999 && !isNaN(temp), temperature: temp, status: temp !== 999 ? 'OK' : 'MODBUS_ERROR' };
         tempCache[sensorId] = { timestamp: now, data: response };
         return response;
       } catch (err) {
@@ -331,7 +381,7 @@ export async function getTemperature(sensorId) {
         const { getModbusTCPClient } = await import('./modbus_honeywell.js');
         const client = getModbusTCPClient(sensorId);
         const temp = await client.readTemperature();
-        const response = { success: temp !== 999, temperature: temp, status: temp !== 999 ? 'OK' : 'MODBUS_ERROR' };
+        const response = { success: temp !== 999 && !isNaN(temp), temperature: temp, status: temp !== 999 ? 'OK' : 'MODBUS_ERROR' };
         tempCache[sensorId] = { timestamp: now, data: response };
         return response;
       } catch (err) {
@@ -579,5 +629,6 @@ export default {
   getTemperature,
   readSelectorPins,
   releaseSelectorPins,
+  releaseAll,
   getDiskSpace
 };

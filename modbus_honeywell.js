@@ -6,6 +6,7 @@
  * soportando Modbus TCP (red) y Modbus RTU (Puerto Serie RS485).
  */
 import net from 'net';
+import logger from './logger.js';
 
 let Modbus = null;
 let SerialPort = null;
@@ -30,6 +31,33 @@ export const REGISTERS = {
   HEAT_SETPOINT: 0x006A,   // Setpoint para calefacción
   RELAY_STATUS: 0x0070     // Estado físico de relevadores (Modbus Coil o Holding Register)
 };
+
+// Mutex para sincronizar acceso concurrente al bus serial RS-485
+const portLocks = new Map();
+
+export async function withSerialLock(portPath, taskFn) {
+  const key = portPath || 'default';
+  while (portLocks.has(key)) {
+    try {
+      await portLocks.get(key);
+    } catch {}
+  }
+  
+  let release;
+  const lockPromise = new Promise((resolve) => {
+    release = resolve;
+  });
+  portLocks.set(key, lockPromise);
+
+  try {
+    return await taskFn();
+  } finally {
+    if (portLocks.get(key) === lockPromise) {
+      portLocks.delete(key);
+    }
+    release();
+  }
+}
 
 /**
  * Cliente Modbus TCP Honeywell
@@ -85,6 +113,14 @@ export class HoneywellModbusTCPClient {
         }
       });
 
+      this.socket.on('close', () => {
+        this.cleanup();
+      });
+
+      this.socket.on('end', () => {
+        this.cleanup();
+      });
+
       this.socket.connect({ host: this.host, port: this.port });
     });
   }
@@ -115,12 +151,13 @@ export class HoneywellModbusTCPClient {
       const response = await Promise.race([readPromise, timeoutPromise]);
 
       if (response && response.response && response.response.body && response.response.body.valuesAsArray.length > 0) {
-        return response.response.body.valuesAsArray[0] / 10.0;
+        const rawVal = response.response.body.valuesAsArray[0];
+        return typeof rawVal === 'number' && !isNaN(rawVal) ? rawVal / 10.0 : 999;
       }
       throw new Error('No data received');
     } catch (err) {
       this.cleanup(); // Liberar socket dañado para forzar reconexión la próxima vez
-      console.error(`[Error Modbus TCP] Fallo al leer la temperatura desde ${this.host}:`, err.message);
+      logger.error(`[Error Modbus TCP] Fallo al leer la temperatura desde ${this.host}:`, err.message, 'HW');
       return 999;
     }
   }
@@ -128,7 +165,7 @@ export class HoneywellModbusTCPClient {
   async writeSystemMode(isOn) {
     const mode = isOn ? 2 : 0;
     if (!isModbusAvailable || process.platform === 'win32') {
-      console.log(`[SIMULACIÓN Modbus TCP] Escribiendo modo de sistema (SYSTEM_MODE) a ${mode} en ${this.host}`);
+      logger.hw(`[SIMULACIÓN Modbus TCP] Escribiendo modo de sistema (SYSTEM_MODE) a ${mode} en ${this.host}`, 'HW');
       return true;
     }
 
@@ -143,7 +180,7 @@ export class HoneywellModbusTCPClient {
       return true;
     } catch (err) {
       this.cleanup(); // Liberar socket dañado
-      console.error(`[Error Modbus TCP] Fallo al escribir el modo de sistema en ${this.host}:`, err.message);
+      logger.error(`[Error Modbus TCP] Fallo al escribir el modo de sistema en ${this.host}:`, err.message, 'HW');
       return false;
     }
   }
@@ -207,6 +244,14 @@ export class HoneywellModbusRTUClient {
             }
           }
         });
+
+        this.serialport.on('close', () => {
+          this.cleanup();
+        });
+
+        this.serialport.on('error', () => {
+          this.cleanup();
+        });
       } catch (err) {
         if (!finished) {
           finished = true;
@@ -232,47 +277,52 @@ export class HoneywellModbusRTUClient {
       return 21.0 + Math.random() * 3.0;
     }
 
-    try {
-      await this.connect();
-      const readPromise = this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout de lectura Modbus RTU')), 3000)
-      );
+    return await withSerialLock(this.path, async () => {
+      try {
+        await this.connect();
+        const readPromise = this.client.readHoldingRegisters(REGISTERS.ROOM_TEMP, 1);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout de lectura Modbus RTU')), 3000)
+        );
 
-      const response = await Promise.race([readPromise, timeoutPromise]);
+        const response = await Promise.race([readPromise, timeoutPromise]);
 
-      if (response && response.response && response.response.body && response.response.body.valuesAsArray.length > 0) {
-        return response.response.body.valuesAsArray[0] / 10.0;
+        if (response && response.response && response.response.body && response.response.body.valuesAsArray.length > 0) {
+          const rawVal = response.response.body.valuesAsArray[0];
+          return typeof rawVal === 'number' && !isNaN(rawVal) ? rawVal / 10.0 : 999;
+        }
+        throw new Error('No data received');
+      } catch (err) {
+        this.cleanup(); // Liberar puerto serie dañado
+        logger.error(`[Error Modbus RTU] Fallo al leer la temperatura desde ${this.path} (Esclavo ${this.slaveId}):`, err.message, 'HW');
+        return 999;
       }
-      throw new Error('No data received');
-    } catch (err) {
-      this.cleanup(); // Liberar puerto serie dañado
-      console.error(`[Error Modbus RTU] Fallo al leer la temperatura desde ${this.path} (Esclavo ${this.slaveId}):`, err.message);
-      return 999;
-    }
+    });
   }
 
   async writeSystemMode(isOn) {
     const mode = isOn ? 2 : 0;
     if (!isModbusAvailable || process.platform === 'win32') {
-      console.log(`[SIMULACIÓN Modbus RTU] Escribiendo modo de sistema (SYSTEM_MODE) a ${mode} en ${this.path} (Esclavo ${this.slaveId})`);
+      logger.hw(`[SIMULACIÓN Modbus RTU] Escribiendo modo de sistema (SYSTEM_MODE) a ${mode} en ${this.path} (Esclavo ${this.slaveId})`, 'HW');
       return true;
     }
 
-    try {
-      await this.connect();
-      const writePromise = this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout de escritura Modbus RTU')), 3000)
-      );
+    return await withSerialLock(this.path, async () => {
+      try {
+        await this.connect();
+        const writePromise = this.client.writeSingleRegister(REGISTERS.SYSTEM_MODE, mode);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout de escritura Modbus RTU')), 3000)
+        );
 
-      await Promise.race([writePromise, timeoutPromise]);
-      return true;
-    } catch (err) {
-      this.cleanup(); // Liberar puerto serie dañado
-      console.error(`[Error Modbus RTU] Fallo al escribir el modo de sistema en ${this.path}:`, err.message);
-      return false;
-    }
+        await Promise.race([writePromise, timeoutPromise]);
+        return true;
+      } catch (err) {
+        this.cleanup(); // Liberar puerto serie dañado
+        logger.error(`[Error Modbus RTU] Fallo al escribir el modo de sistema en ${this.path}:`, err.message, 'HW');
+        return false;
+      }
+    });
   }
 }
 
@@ -301,5 +351,6 @@ export default {
   HoneywellModbusRTUClient,
   getModbusTCPClient,
   getModbusRTUClient,
+  withSerialLock,
   REGISTERS
 };

@@ -2,6 +2,7 @@ import WebSocket from 'ws';
 import config from './config.js';
 import logger from './logger.js';
 import db from './db.js';
+import controller from './controller.js';
 
 let ws = null;
 let isConnecting = false;
@@ -91,7 +92,6 @@ export const wsClient = {
       ws.on('error', (error) => {
         isConnecting = false;
         logger.error('El WebSocket encontró un error:', error.message || error, 'NET');
-        // Close event will follow and trigger reconnection
       });
 
       ws.on('pong', () => {
@@ -153,12 +153,11 @@ export const wsClient = {
    * Schedules a connection retry with exponential backoff.
    */
   scheduleReconnect: () => {
-    if (reconnectTimer) return; // Ya hay un reintento programado
+    if (reconnectTimer) return;
     
     logger.info(`Programando reconexión en ${reconnectDelay}ms...`, 'NET');
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
-      // Adjust backoff delay for the next attempt
       reconnectDelay = Math.min(
         reconnectDelay * config.RECONNECT_BACKOFF_FACTOR,
         config.RECONNECT_MAX_DELAY
@@ -198,6 +197,7 @@ export const wsClient = {
    * Handles incoming WebSocket messages by routing them based on event type.
    */
   handleMessage: async (message) => {
+    if (!message || typeof message !== 'object') return;
     const { event, data } = message;
     if (!event) return;
 
@@ -206,31 +206,33 @@ export const wsClient = {
     switch (event) {
       case 'register_ack':
         registered = true;
-        reconnectDelay = config.RECONNECT_INITIAL_DELAY; // Reset backoff delay on successful auth
+        reconnectDelay = config.RECONNECT_INITIAL_DELAY;
         logger.success('Gateway registrado y autenticado con éxito en el servidor.', 'NET');
         wsClient.startHeartbeat();
         wsClient.flushOfflineTelemetry();
         break;
 
       case 'gateway_manifest':
-        logger.sync('Se recibió actualización de manifiesto del servidor.', 'NET');
-        db.saveManifest(data);
-        // Trigger immediate control loop tick to apply updated configurations without delay
-        try {
-          const { default: controller } = await import('./controller.js');
-          controller.run();
-        } catch (ctrlErr) {
-          logger.error('Error al invocar ciclo de control tras actualización de manifiesto.', ctrlErr, 'NET');
+        if (data) {
+          logger.sync('Se recibió actualización de manifiesto del servidor.', 'NET');
+          db.saveManifest(data);
+          try {
+            controller.run();
+          } catch (ctrlErr) {
+            logger.error('Error al invocar ciclo de control tras actualización de manifiesto.', ctrlErr, 'NET');
+          }
         }
         break;
 
       case 'device_command':
-        logger.info(`Comando de dispositivo recibido para ${data.deviceId}`, 'NET');
-        if (commandCallback) {
-          try {
-            commandCallback(data.deviceId, data.state);
-          } catch (cmdErr) {
-            logger.error(`Error procesando comando para el dispositivo ${data.deviceId}:`, cmdErr, 'NET');
+        if (data && data.deviceId) {
+          logger.info(`Comando de dispositivo recibido para ${data.deviceId}`, 'NET');
+          if (commandCallback) {
+            try {
+              commandCallback(data.deviceId, data.state);
+            } catch (cmdErr) {
+              logger.error(`Error procesando comando para el dispositivo ${data.deviceId}:`, cmdErr, 'NET');
+            }
           }
         }
         break;
@@ -259,7 +261,6 @@ export const wsClient = {
       if (wsClient.isConnected()) {
         const pingSent = wsClient.send('ping', { timestamp: new Date().toISOString() });
         if (pingSent) {
-          // Arm watchdog timer for ACK response
           if (heartbeatTimeout) clearTimeout(heartbeatTimeout);
           heartbeatTimeout = setTimeout(() => {
             logger.warn(`Watchdog: Sin respuesta de heartbeat en ${HEARTBEAT_ACK_TIMEOUT_MS}ms. Conexión zombi detectada.`, 'NET');
@@ -291,7 +292,6 @@ export const wsClient = {
       }
     }
     
-    // Fallback: Queue offline telemetry
     db.queueTelemetry(payload);
   },
 
@@ -299,6 +299,7 @@ export const wsClient = {
    * Uploads energy meter telemetry data, queueing it locally if the socket is offline.
    */
   uploadEnergyTelemetry: (energyRecord) => {
+    if (!energyRecord) return false;
     const payload = {
       event: 'energy_telemetry',
       gatewayId: config.GATEWAY_ID,
@@ -339,7 +340,6 @@ export const wsClient = {
       const success = wsClient.send(eventType, record);
       if (success) {
         sentCount++;
-        // Small delay to prevent network buffer overflow
         await new Promise(resolve => setTimeout(resolve, 50));
       } else {
         break;

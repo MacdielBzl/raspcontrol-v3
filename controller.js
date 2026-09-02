@@ -8,29 +8,31 @@ import wsClient from './websocket.js';
 // Cache for instanced hardware relays to avoid re-exporting pins
 const relayPins = {};
 
+// Reference timestamp for boot protection against immediate restarts
+const gatewayStartTime = Date.now();
+
 /**
  * Helper to get or create a GpioRelay instance for a pin.
  */
-function getRelayInstance(pin, deviceId) {
+function getRelayInstance(pin, deviceId, activeLow = true) {
   const normalizedPin = Number(pin);
   const key = `${normalizedPin}-${deviceId || ''}`;
   if (!relayPins[key]) {
-    relayPins[key] = new hardware.GpioRelay(normalizedPin, deviceId);
+    relayPins[key] = new hardware.GpioRelay(normalizedPin, deviceId, activeLow);
   }
   return relayPins[key];
 }
 
 /**
  * Checks if the current local time falls within a schedule's active window.
+ * Properly handles midnight transitions (e.g., 22:00:00 to 06:00:00 across days).
  */
 function isScheduleActive(sch) {
   if (!sch || !sch.days || !Array.isArray(sch.days) || sch.days.length === 0) return false;
   
   const now = moment().tz(config.TIMEZONE);
   const currentDay = now.isoWeekday().toString(); // 1 = Monday, ..., 7 = Sunday
-  
-  const dayMatches = sch.days.some(d => String(d).trim() === currentDay);
-  if (!dayMatches) return false;
+  const yesterdayDay = now.clone().subtract(1, 'day').isoWeekday().toString();
   
   const currentTimeStr = now.format(config.TIME_FORMAT);
   
@@ -46,17 +48,23 @@ function isScheduleActive(sch) {
   const endTime = padTime(sch.endTime, '23:59:59');
   
   if (startTime <= endTime) {
-    return currentTimeStr >= startTime && currentTimeStr <= endTime;
+    const dayMatches = sch.days.some(d => String(d).trim() === currentDay);
+    return dayMatches && currentTimeStr >= startTime && currentTimeStr <= endTime;
   } else {
     // Overnight window (e.g. 22:00:00 to 06:00:00)
-    return currentTimeStr >= startTime || currentTimeStr <= endTime;
+    if (currentTimeStr >= startTime) {
+      return sch.days.some(d => String(d).trim() === currentDay);
+    }
+    if (currentTimeStr <= endTime) {
+      return sch.days.some(d => String(d).trim() === yesterdayDay);
+    }
+    return false;
   }
 }
 
+// Sequential execution queue for the control loop
 let isLoopRunning = false;
 let hasPendingRun = false;
-let loopStartTime = 0;
-const MAX_LOOP_DURATION_MS = 30000;
 
 export const controller = {
   /**
@@ -68,23 +76,16 @@ export const controller = {
   },
 
   /**
-   * Punto de entrada principal para ejecutar un ciclo del lazo de control.
+   * Punto de entrada principal para ejecutar un ciclo del lazo de control con cola de ejecución segura.
    */
   run: async () => {
-    const nowTimestamp = Date.now();
     if (isLoopRunning) {
-      if (nowTimestamp - loopStartTime > MAX_LOOP_DURATION_MS) {
-        logger.warn(`Watchdog: El ciclo del lazo de control superó los ${MAX_LOOP_DURATION_MS / 1000}s. Forzando liberación de bloqueo.`, 'CTRL');
-        isLoopRunning = false;
-      } else {
-        logger.debug('El ciclo del lazo de control ya está en ejecución. Marcando ejecución pendiente.', 'CTRL');
-        hasPendingRun = true;
-        return;
-      }
+      hasPendingRun = true;
+      logger.debug('El ciclo del lazo de control ya está en ejecución. Marcando ejecución pendiente.', 'CTRL');
+      return;
     }
 
     isLoopRunning = true;
-    loopStartTime = Date.now();
 
     try {
       const devices = db.getDevices();
@@ -95,26 +96,24 @@ export const controller = {
 
       logger.debug('Ejecutando ciclo del lazo de control...', 'CTRL');
 
-      // 1. Recopilar todas las lecturas de los sensores de temperatura en paralelo
+      // 1. Recopilar lecturas de sensores de temperatura de manera secuencial para evitar contención en el bus 1-Wire
       const tempReadings = {};
-      await Promise.all(
-        devices.map(async (dev) => {
-          if (dev.tempId) {
-            const res = await hardware.getTemperature(dev.tempId);
-            const status = (res && res.status) || 'ERROR';
-            if (res && res.success) {
-              tempReadings[dev.id] = res.temperature;
-              db.saveDeviceState(dev.id, { currentVal: res.temperature, sensorStatus: status });
-              logger.info(`Lectura de temperatura para ${dev.name}: ${res.temperature}°C (Estado Sensor: ${status})`, 'CTRL');
-              db.writeDeviceLog(dev.id, `Lectura de temperatura: ${res.temperature}°C (Estado Sensor: ${status})`);
-            } else {
-              db.saveDeviceState(dev.id, { sensorStatus: status });
-              logger.warn(`Fallo al leer la temperatura para ${dev.name} (tempId: ${dev.tempId}) - Estado Sensor: ${status}`, 'CTRL');
-              db.writeDeviceLog(dev.id, `Error en la lectura de temperatura - Estado Sensor: ${status}`);
-            }
+      for (const dev of devices) {
+        if (dev.tempId) {
+          const res = await hardware.getTemperature(dev.tempId);
+          const status = (res && res.status) || 'ERROR';
+          if (res && res.success && typeof res.temperature === 'number' && !isNaN(res.temperature)) {
+            tempReadings[dev.id] = res.temperature;
+            db.saveDeviceState(dev.id, { currentVal: res.temperature, sensorStatus: status });
+            logger.info(`Lectura de temperatura para ${dev.name}: ${res.temperature}°C (Estado Sensor: ${status})`, 'CTRL');
+            db.writeDeviceLog(dev.id, `Lectura de temperatura: ${res.temperature}°C (Estado Sensor: ${status})`);
+          } else {
+            db.saveDeviceState(dev.id, { sensorStatus: status });
+            logger.warn(`Fallo al leer la temperatura para ${dev.name} (tempId: ${dev.tempId}) - Estado Sensor: ${status}`, 'CTRL');
+            db.writeDeviceLog(dev.id, `Error en la lectura de temperatura - Estado Sensor: ${status}`);
           }
-        })
-      );
+        }
+      }
 
       // 2. Evaluar los estados objetivo para cada dispositivo basados en calendarios y termostatos
       const targetStates = {};
@@ -138,7 +137,7 @@ export const controller = {
         const activeSch = schedules.find(isScheduleActive);
         
         let desiredOn = false;
-        let activeSetpoint = dev.setpoint != null ? Number(dev.setpoint) : null;
+        let activeSetpoint = dev.setpoint != null && !isNaN(Number(dev.setpoint)) ? Number(dev.setpoint) : null;
         
         // Verificación de anulación manual
         const currentState = db.getDeviceState(dev.id);
@@ -164,7 +163,7 @@ export const controller = {
           logger.debug(`Control manual activo para el dispositivo ${dev.name}: forzando estado a ${desiredOn ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
           db.writeDeviceLog(dev.id, `Control manual activo: forzando estado a ${desiredOn ? 'ENCENDIDO' : 'APAGADO'}`);
         } else if (activeSch) {
-          if (activeSch.action && activeSch.action.setpoint != null) {
+          if (activeSch.action && activeSch.action.setpoint != null && !isNaN(Number(activeSch.action.setpoint))) {
             activeSetpoint = Number(activeSch.action.setpoint);
           }
           desiredOn = activeSch.action?.on !== false;
@@ -180,57 +179,59 @@ export const controller = {
           db.saveDeviceState(dev.id, { lastActiveSetpoint: activeSetpoint });
         }
 
-        // Sistema HVAC unificado (Ventilador y Compresor en el mismo dispositivo)
+        // Sistema de 2 Relevadores: HVAC unificado o Conmutador de Transferencia (Selector + Marcha)
+        const isTransferSwitch = dev.isTransferSwitch || (dev.compressorPin != null && dev.type !== 'hvac');
         if (dev.type === 'hvac' || dev.compressorPin != null) {
-          let targetFan = false;
-          let targetCompressor = false;
+          let targetPin1 = false; // Ventilador (HVAC) o Selector Local/Remoto (Transfer Switch)
+          let targetPin2 = false; // Compresor (HVAC) o Señal de Marcha (Transfer Switch)
 
           if (desiredOn) {
-            targetFan = true; // El ventilador debe estar ENCENDIDO si la unidad HVAC está habilitada
+            targetPin1 = true; // Selector a Modo Remoto (o Ventilador encendido)
 
             if (dev.tempId && activeSetpoint !== null) {
-              if (tempReadings[dev.id] !== undefined) {
+              if (tempReadings[dev.id] !== undefined && !isNaN(tempReadings[dev.id])) {
                 const currentTemp = tempReadings[dev.id];
                 
-                // Histéresis del Termostato de Enfriamiento (ENCENDIDO si > setpoint + 0.5, APAGADO si < setpoint - 0.5)
+                // Histéresis de Enfriamiento / Termostato (ENCENDIDO si > setpoint + 0.5, APAGADO si < setpoint - 0.5)
                 if (currentTemp > (activeSetpoint + 0.5)) {
-                  targetCompressor = true;
+                  targetPin2 = true;
                 } else if (currentTemp < (activeSetpoint - 0.5)) {
-                  targetCompressor = false;
+                  targetPin2 = false;
                 } else {
-                  // Banda muerta de histéresis: mantener estado actual del compresor
-                  targetCompressor = currentState.compressorOn || false;
+                  // Banda muerta de histéresis: mantener estado actual
+                  targetPin2 = currentState.compressorOn || false;
                 }
-                logger.info(`[Termostato HVAC] ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Compresor objetivo: ${targetCompressor ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.compressorOn ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
+                const labelTag = isTransferSwitch ? '[Conmutador Transferencia]' : '[Termostato HVAC]';
+                logger.info(`${labelTag} ${dev.name}: Temp actual = ${currentTemp}°C, Setpoint = ${activeSetpoint}°C. Marcha/Compresor objetivo: ${targetPin2 ? 'ENCENDIDO' : 'APAGADO'} (Estado actual: ${currentState.compressorOn ? 'ENCENDIDO' : 'APAGADO'})`, 'CTRL');
               } else {
-                // Falló la lectura del sensor de temperatura, apagar el compresor por seguridad
-                logger.warn(`Fallo de seguridad: falta lectura de temperatura para HVAC ${dev.name}. Forzando apagado del compresor.`, 'CTRL');
-                db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado del compresor.');
-                targetCompressor = false;
+                // Falló la lectura del sensor de temperatura, apagar la carga por seguridad
+                logger.warn(`Fallo de seguridad: falta lectura de temperatura para ${dev.name}. Forzando apagado de marcha/compresor.`, 'CTRL');
+                db.writeDeviceLog(dev.id, 'Fallo de seguridad: falta lectura de temperatura. Forzando apagado de marcha/compresor.');
+                targetPin2 = false;
               }
             } else {
               // Si no tiene sensor de temperatura configurado o no hay setpoint activo,
-              // el compresor simplemente sigue el estado de encendido del HVAC.
-              targetCompressor = true;
+              // la marcha/compresor sigue directamente la orden del equipo.
+              targetPin2 = true;
             }
           } else {
-            logger.info(`[Termostato HVAC] ${dev.name}: HVAC apagado/deshabilitado por control manual o fuera de calendario.`, 'CTRL');
+            const labelTag = isTransferSwitch ? '[Conmutador Transferencia]' : '[Termostato HVAC]';
+            logger.info(`${labelTag} ${dev.name}: Equipo apagado/en reposo (Botonera física habilitada si es conmutador).`, 'CTRL');
           }
 
           targetStates[dev.id] = {
-            fan: targetFan,
-            compressor: targetCompressor
+            fan: targetPin1,
+            compressor: targetPin2
           };
 
         } else {
           // Relevador estándar único / Temporizador / Tomacorriente
           let targetOn = desiredOn;
-
           const isThermostat = dev.type === 'heater' || dev.type === 'compressor';
 
           if (isThermostat) {
             if (desiredOn && activeSetpoint !== null) {
-              if (tempReadings[dev.id] !== undefined) {
+              if (tempReadings[dev.id] !== undefined && !isNaN(tempReadings[dev.id])) {
                 const currentTemp = tempReadings[dev.id];
 
                 if (dev.type === 'heater') {
@@ -269,19 +270,26 @@ export const controller = {
         }
       }
 
-      // 3. Aplicar enclavamientos de seguridad (dependencias Padre/Hijo para configuraciones heredadas)
+      // 3. Aplicar enclavamientos de seguridad (evaluando correctamente padres booleanos y estructurados)
       for (const dev of devices) {
-        if ((dev.type === 'compressor' || dev.type === 'heater') && dev.equipment_id) {
-          // Buscar al equipo padre usando la propiedad equipment_id
-          const parent = devices.find(d => d.type === 'equipment' && String(d.equipment_id) === String(dev.equipment_id));
+        if (dev.equipment_id) {
+          const parent = devices.find(d => String(d.id || d.equipment_id) === String(dev.equipment_id));
           const parentTarget = parent ? targetStates[parent.id] : false;
-          if (!parentTarget) {
-            const currentTarget = typeof targetStates[dev.id] === 'object' ? targetStates[dev.id].compressor : targetStates[dev.id];
+          
+          // Un equipo padre está activo si es true o si es un objeto con fan o compressor en true
+          const isParentOn = parentTarget && (typeof parentTarget === 'object' ? Boolean(parentTarget.fan || parentTarget.compressor) : Boolean(parentTarget));
+          
+          if (!isParentOn) {
+            const currentTarget = typeof targetStates[dev.id] === 'object' 
+              ? (targetStates[dev.id].fan || targetStates[dev.id].compressor) 
+              : targetStates[dev.id];
+
             if (currentTarget) {
               logger.warn(`[Enclavamiento de Seguridad] Forzando el apagado de ${dev.name} porque el equipo padre ${parent ? parent.name : dev.equipment_id} está APAGADO.`, 'CTRL');
               db.writeDeviceLog(dev.id, `Enclavamiento de seguridad: Forzando apagado porque el equipo padre está APAGADO.`);
               
               if (typeof targetStates[dev.id] === 'object') {
+                targetStates[dev.id].fan = false;
                 targetStates[dev.id].compressor = false;
               } else {
                 targetStates[dev.id] = false;
@@ -291,43 +299,43 @@ export const controller = {
         }
       }
 
-      // 4. Aplicar salvaguardas de ciclo corto (espera_para_encender)
+      // 4. Aplicar salvaguardas de ciclo corto con protección de arranque de gateway (espera_para_encender)
       const now = Date.now();
       for (const dev of devices) {
         const isHvac = dev.type === 'hvac' || dev.compressorPin != null;
-        
-        if (isHvac) {
-          const target = targetStates[dev.id];
-          if (target && target.compressor) {
-            const currentState = db.getDeviceState(dev.id);
-            // Si el compresor quiere encenderse, pero estaba previamente apagado
-            if (!currentState.compressorOn) {
-              const lastOff = currentState.lastCompressorOff || 0;
-              const waitTimeSeconds = Number(dev.wait_to_turn_on || 0);
-              const secondsSinceOff = (now - lastOff) / 1000;
+        const waitTimeSeconds = Number(dev.wait_to_turn_on || 0);
 
-              if (secondsSinceOff < waitTimeSeconds) {
-                const remaining = Math.round(waitTimeSeconds - secondsSinceOff);
-                logger.info(`[Protección Ciclo Corto] Retrasando compresor HVAC de ${dev.name} (espera_para_encender: ${waitTimeSeconds}s). Restante: ${remaining}s`, 'CTRL');
-                db.writeDeviceLog(dev.id, `Protección contra ciclo corto activa. Retrasando arranque del compresor. Restante: ${remaining}s`);
-                target.compressor = false; // Retener compresor apagado
+        if (waitTimeSeconds > 0) {
+          if (isHvac) {
+            const target = targetStates[dev.id];
+            if (target && target.compressor) {
+              const currentState = db.getDeviceState(dev.id);
+              if (!currentState.compressorOn) {
+                // Considerar el último apagado o el inicio del gateway para proteger compresores tras cortes eléctricos
+                const lastOff = Math.max(currentState.lastCompressorOff || 0, gatewayStartTime);
+                const secondsSinceOff = (now - lastOff) / 1000;
+
+                if (secondsSinceOff < waitTimeSeconds) {
+                  const remaining = Math.round(waitTimeSeconds - secondsSinceOff);
+                  logger.info(`[Protección Ciclo Corto] Retrasando compresor HVAC de ${dev.name} (espera_para_encender: ${waitTimeSeconds}s). Restante: ${remaining}s`, 'CTRL');
+                  db.writeDeviceLog(dev.id, `Protección contra ciclo corto activa. Retrasando arranque del compresor. Restante: ${remaining}s`);
+                  target.compressor = false;
+                }
               }
             }
-          }
-        } else {
-          // Relevador estándar de compresor o general
-          if (targetStates[dev.id]) {
-            const currentState = db.getDeviceState(dev.id);
-            if (!currentState.on) {
-              const lastOff = currentState.lastCompressorOff || 0;
-              const waitTimeSeconds = Number(dev.wait_to_turn_on || 0);
-              const secondsSinceOff = (now - lastOff) / 1000;
+          } else {
+            if (targetStates[dev.id]) {
+              const currentState = db.getDeviceState(dev.id);
+              if (!currentState.on) {
+                const lastOff = Math.max(currentState.lastCompressorOff || 0, gatewayStartTime);
+                const secondsSinceOff = (now - lastOff) / 1000;
 
-              if (secondsSinceOff < waitTimeSeconds) {
-                const remaining = Math.round(waitTimeSeconds - secondsSinceOff);
-                logger.info(`[Protección Ciclo Corto] Retrasando ${dev.name} (espera_para_encender: ${waitTimeSeconds}s). Restante: ${remaining}s`, 'CTRL');
-                db.writeDeviceLog(dev.id, `Protección contra ciclo corto activa. Retrasando arranque. Restante: ${remaining}s`);
-                targetStates[dev.id] = false;
+                if (secondsSinceOff < waitTimeSeconds) {
+                  const remaining = Math.round(waitTimeSeconds - secondsSinceOff);
+                  logger.info(`[Protección Ciclo Corto] Retrasando ${dev.name} (espera_para_encender: ${waitTimeSeconds}s). Restante: ${remaining}s`, 'CTRL');
+                  db.writeDeviceLog(dev.id, `Protección contra ciclo corto activa. Retrasando arranque. Restante: ${remaining}s`);
+                  targetStates[dev.id] = false;
+                }
               }
             }
           }
@@ -336,42 +344,76 @@ export const controller = {
 
       // 5. Ejecutar estados en el hardware físico y actualizar la base de datos
       for (const dev of devices) {
+        const isTransferSwitch = dev.isTransferSwitch || (dev.compressorPin != null && dev.type !== 'hvac');
         const isHvac = dev.type === 'hvac' || dev.compressorPin != null;
+        const activeLow = dev.active_high ? false : (dev.active_low !== false);
 
         if (isHvac) {
           const target = targetStates[dev.id];
           const currentState = db.getDeviceState(dev.id);
+          const namePin1 = isTransferSwitch ? 'Selector Modo Remoto' : 'Ventilador';
+          const namePin2 = isTransferSwitch ? 'Marcha / Arranque' : 'Compresor';
 
-          // Controlar Ventilador (pin)
-          const fanRelay = dev.pin != null ? getRelayInstance(dev.pin, dev.device_id) : null;
-          if (dev.pin != null && (target.fan !== currentState.on || !fanRelay.hasBeenWritten)) {
-            logger.info(`Cambiando Ventilador de HVAC ${dev.name} (Pin ${dev.pin}) a ${target.fan ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
-            db.writeDeviceLog(dev.id, `Ventilador cambiado a ${target.fan ? 'ENCENDIDO' : 'APAGADO'} (Pin ${dev.pin})`);
-            fanRelay.write(target.fan ? 0 : 1); // 0 = ENCENDIDO, 1 = APAGADO
-            db.saveDeviceState(dev.id, { on: target.fan });
+          const relay1 = dev.pin != null ? getRelayInstance(dev.pin, dev.device_id, activeLow) : null;
+          const relay2 = dev.compressorPin != null ? getRelayInstance(dev.compressorPin, dev.device_id, activeLow) : null;
 
-            if (target.fan) {
-              const powerOnWait = Number(dev.power_on_wait || 0);
-              if (powerOnWait > 0) {
-                logger.info(`[Retraso de Arranque] Esperando power_on_wait (${powerOnWait}s) antes de continuar para ${dev.name}...`, 'CTRL');
-                await new Promise(resolve => setTimeout(resolve, powerOnWait * 1000));
+          // Secuencia segura de conmutación:
+          // Al APAGAR: Apagar primero la marcha/compresor (Pin 2), esperar desexcitación, y luego apagar selector (Pin 1) a NC.
+          const isTurningOffBoth = !target.compressor && !target.fan;
+
+          if (isTurningOffBoth) {
+            // 1. Apagar Relevador 2 (Marcha / Compresor)
+            if (dev.compressorPin != null && (target.compressor !== currentState.compressorOn || !relay2.hasBeenWritten)) {
+              logger.info(`Cambiando ${namePin2} de ${dev.name} (Pin ${dev.compressorPin}) a APAGADO`, 'CTRL');
+              db.writeDeviceLog(dev.id, `${namePin2} cambiado a APAGADO (Pin ${dev.compressorPin})`);
+              relay2.write(1);
+              db.saveDeviceState(dev.id, { compressorOn: false, lastCompressorOff: Date.now() });
+
+              if (isTransferSwitch) {
+                // Pequeña pausa de seguridad antes de soltar el selector
+                await new Promise(resolve => setTimeout(resolve, 800));
               }
             }
-          }
 
-          // Controlar Compresor (compressorPin)
-          const compRelay = dev.compressorPin != null ? getRelayInstance(dev.compressorPin, dev.device_id) : null;
-          if (dev.compressorPin != null && (target.compressor !== currentState.compressorOn || !compRelay.hasBeenWritten)) {
-            logger.info(`Cambiando Compresor de HVAC ${dev.name} (Pin ${dev.compressorPin}) a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
-            db.writeDeviceLog(dev.id, `Compresor cambiado a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'} (Pin ${dev.compressorPin})`);
-            compRelay.write(target.compressor ? 0 : 1);
-            
-            const extraState = { compressorOn: target.compressor };
-            if (!target.compressor) {
-              extraState.lastCompressorOff = Date.now();
+            // 2. Apagar Relevador 1 (Selector / Ventilador)
+            if (dev.pin != null && (target.fan !== currentState.on || !relay1.hasBeenWritten)) {
+              logger.info(`Cambiando ${namePin1} de ${dev.name} (Pin ${dev.pin}) a APAGADO (Retorno a NC / Local)`, 'CTRL');
+              db.writeDeviceLog(dev.id, `${namePin1} cambiado a APAGADO (Pin ${dev.pin})`);
+              relay1.write(1);
+              db.saveDeviceState(dev.id, { on: false });
             }
-            
-            db.saveDeviceState(dev.id, extraState);
+
+          } else {
+            // Al ENCENDER (o mantener encendido):
+            // 1. Encender Relevador 1 (Selector a Remoto / Ventilador)
+            if (dev.pin != null && (target.fan !== currentState.on || !relay1.hasBeenWritten)) {
+              logger.info(`Cambiando ${namePin1} de ${dev.name} (Pin ${dev.pin}) a ${target.fan ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
+              db.writeDeviceLog(dev.id, `${namePin1} cambiado a ${target.fan ? 'ENCENDIDO' : 'APAGADO'} (Pin ${dev.pin})`);
+              relay1.write(target.fan ? 0 : 1);
+              db.saveDeviceState(dev.id, { on: target.fan });
+
+              if (target.fan) {
+                const powerOnWait = Number(dev.power_on_wait || (isTransferSwitch ? 2 : 0));
+                if (powerOnWait > 0) {
+                  logger.info(`[Retraso de Conmutación] Esperando ${powerOnWait}s para estabilización antes de activar ${namePin2} en ${dev.name}...`, 'CTRL');
+                  await new Promise(resolve => setTimeout(resolve, powerOnWait * 1000));
+                }
+              }
+            }
+
+            // 2. Encender Relevador 2 (Marcha / Compresor)
+            if (dev.compressorPin != null && (target.compressor !== currentState.compressorOn || !relay2.hasBeenWritten)) {
+              logger.info(`Cambiando ${namePin2} de ${dev.name} (Pin ${dev.compressorPin}) a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
+              db.writeDeviceLog(dev.id, `${namePin2} cambiado a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'} (Pin ${dev.compressorPin})`);
+              relay2.write(target.compressor ? 0 : 1);
+              
+              const extraState = { compressorOn: target.compressor };
+              if (!target.compressor) {
+                extraState.lastCompressorOff = Date.now();
+              }
+              
+              db.saveDeviceState(dev.id, extraState);
+            }
           }
 
         } else {
@@ -380,7 +422,7 @@ export const controller = {
 
           const targetOn = targetStates[dev.id];
           const currentState = db.getDeviceState(dev.id);
-          const relay = getRelayInstance(dev.pin, dev.device_id);
+          const relay = getRelayInstance(dev.pin, dev.device_id, activeLow);
 
           if (targetOn !== currentState.on || !relay.hasBeenWritten) {
             logger.info(`Cambiando dispositivo ${dev.name} (Pin ${dev.pin}) a ${targetOn ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
@@ -398,7 +440,7 @@ export const controller = {
             } else {
               relay.write(1);
               db.saveDeviceState(dev.id, { on: false, lastTurnedOff: new Date().toISOString(), lastCompressorOff: Date.now() });
-              await new Promise(resolve => setTimeout(resolve, 1000));
+              await new Promise(resolve => setTimeout(resolve, 500));
             }
           }
         }
@@ -410,10 +452,10 @@ export const controller = {
       isLoopRunning = false;
       if (hasPendingRun) {
         hasPendingRun = false;
-        logger.debug('Procesando ejecución pendiente del lazo de control...', 'CTRL');
+        logger.debug('Procesando ejecución pendiente encolada del lazo de control...', 'CTRL');
         setTimeout(() => {
           controller.run();
-        }, 100);
+        }, 50);
       }
     }
   },
@@ -422,6 +464,7 @@ export const controller = {
    * Maneja los comandos de estado inmediatos recibidos desde el WebSocket.
    */
   handleCommand: async (deviceId, state) => {
+    if (!state) return;
     logger.sync(`Ejecutando comando instantáneo para el dispositivo ${deviceId}: ${JSON.stringify(state)}`, 'CTRL');
     
     const devices = db.getDevices();
@@ -453,11 +496,11 @@ export const controller = {
 
       // Forzar evaluación y escritura física del relevador
       if (dev.pin != null) {
-        const relay = getRelayInstance(dev.pin, dev.device_id);
+        const relay = getRelayInstance(dev.pin, dev.device_id, !dev.active_high);
         relay.hasBeenWritten = false;
       }
       if (dev.compressorPin != null) {
-        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id);
+        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id, !dev.active_high);
         compRelay.hasBeenWritten = false;
       }
 
@@ -468,7 +511,7 @@ export const controller = {
     // 3. Modo Manual / Temporizador / Forzado de Encendido o Apagado / Cambio de Modo
     else if (state.on !== undefined || state.timer !== undefined || state.mode !== undefined) {
       let manualDate = null;
-      if (state.timer) {
+      if (state.timer && !isNaN(Number(state.timer))) {
         manualDate = moment().tz(config.TIMEZONE).add(Number(state.timer), 'minutes').format(config.DATE_TIME_FORMAT);
       }
       
@@ -488,11 +531,11 @@ export const controller = {
 
       // Forzar que el relevador físico ejecute la conmutación de inmediato
       if (dev.pin != null) {
-        const relay = getRelayInstance(dev.pin, dev.device_id);
+        const relay = getRelayInstance(dev.pin, dev.device_id, !dev.active_high);
         relay.hasBeenWritten = false;
       }
       if (dev.compressorPin != null) {
-        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id);
+        const compRelay = getRelayInstance(dev.compressorPin, dev.device_id, !dev.active_high);
         compRelay.hasBeenWritten = false;
       }
 
@@ -530,7 +573,7 @@ export const controller = {
       if (dev.tempId) {
         const tempRes = await hardware.getTemperature(dev.tempId);
         record.sensorStatus = (tempRes && tempRes.status) || 'ERROR';
-        if (tempRes && tempRes.success) {
+        if (tempRes && tempRes.success && typeof tempRes.temperature === 'number' && !isNaN(tempRes.temperature)) {
           record.temperature = tempRes.temperature;
         }
       }
@@ -540,13 +583,14 @@ export const controller = {
 
     const diskSpace = await hardware.getDiskSpace();
     const selectors = hardware.readSelectorPins();
+    const cpuTempRes = await hardware.getTemperature('cpu');
 
     wsClient.uploadTelemetry({
       devices: telemetryData,
       metrics: {
         disk: diskSpace,
         selectors: selectors,
-        cpuTemp: (await hardware.getTemperature('cpu')).temperature
+        cpuTemp: cpuTempRes?.temperature || 0
       }
     });
   }
