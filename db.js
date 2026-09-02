@@ -105,21 +105,31 @@ export const db = {
         logger.warn(msg, 'DB');
         db.writeDeviceLog(oldDev.id, msg);
         if (oldDev.pin != null) {
-          try {
-            const relay = new hardware.GpioRelay(oldDev.pin, oldDev.device_id);
-            relay.write(1); // 1 = APAGADO
-            relay.release();
-          } catch (e) {
-            logger.error(`Error apagando pin ${oldDev.pin} de dispositivo eliminado:`, e, 'DB');
+          const pinStillInUse = newDevices.some(d => d.pin === oldDev.pin || d.compressorPin === oldDev.pin);
+          if (!pinStillInUse) {
+            try {
+              const relay = new hardware.GpioRelay(oldDev.pin, oldDev.device_id);
+              relay.write(1); // 1 = APAGADO
+              relay.release();
+            } catch (e) {
+              logger.error(`Error apagando pin ${oldDev.pin} de dispositivo eliminado:`, e, 'DB');
+            }
+          } else {
+            logger.info(`Pin ${oldDev.pin} transferido a otro dispositivo en el nuevo manifiesto. Manteniendo estado sin interrupción.`, 'DB');
           }
         }
         if (oldDev.compressorPin != null) {
-          try {
-            const compRelay = new hardware.GpioRelay(oldDev.compressorPin, oldDev.device_id);
-            compRelay.write(1); // 1 = APAGADO
-            compRelay.release();
-          } catch (e) {
-            logger.error(`Error apagando compressorPin ${oldDev.compressorPin} de dispositivo eliminado:`, e, 'DB');
+          const compPinStillInUse = newDevices.some(d => d.pin === oldDev.compressorPin || d.compressorPin === oldDev.compressorPin);
+          if (!compPinStillInUse) {
+            try {
+              const compRelay = new hardware.GpioRelay(oldDev.compressorPin, oldDev.device_id);
+              compRelay.write(1); // 1 = APAGADO
+              compRelay.release();
+            } catch (e) {
+              logger.error(`Error apagando compressorPin ${oldDev.compressorPin} de dispositivo eliminado:`, e, 'DB');
+            }
+          } else {
+            logger.info(`Pin ${oldDev.compressorPin} transferido a otro dispositivo en el nuevo manifiesto. Manteniendo estado sin interrupción.`, 'DB');
           }
         }
         delete dataStore.deviceStates[oldDev.id];
