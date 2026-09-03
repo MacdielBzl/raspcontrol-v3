@@ -83,7 +83,9 @@ async function start() {
   }
 }
 
-function shutdown(exitCode = 0) {
+let isShuttingDown = false;
+
+async function shutdown(exitCode = 0) {
   logger.warn(`Se recibió señal de apagado. Limpiando pines de hardware y saliendo (Código: ${exitCode})...`, 'SYS');
   
   if (controlInterval) clearInterval(controlInterval);
@@ -94,25 +96,29 @@ function shutdown(exitCode = 0) {
   // Clean up pins and ensure all relays (fan + compressor) are safely opened/de-energized
   try {
     const devices = db.getDevices();
-    devices.forEach(dev => {
+    for (const dev of devices) {
+      const activeLow = dev.active_high ? false : (dev.active_low !== false);
       if (dev.pin != null) {
         try {
-          const relay = new hardware.GpioRelay(dev.pin, dev.device_id, !dev.active_high);
-          relay.write(1); // 1 = APAGADO
-          relay.release();
+          const relay = new hardware.GpioRelay(dev.pin, dev.device_id, activeLow);
+          await relay.write(1); // 1 = APAGADO
+          await relay.release();
         } catch {}
       }
       if (dev.compressorPin != null) {
         try {
-          const compRelay = new hardware.GpioRelay(dev.compressorPin, dev.device_id, !dev.active_high);
-          compRelay.write(1); // 1 = APAGADO
-          compRelay.release();
+          const compRelay = new hardware.GpioRelay(dev.compressorPin, dev.device_id, activeLow);
+          await compRelay.write(1); // 1 = APAGADO
+          await compRelay.release();
         } catch {}
       }
-    });
+    }
 
-    hardware.releaseAll();
+    await hardware.releaseAll();
     db.flushLogs();
+    if (typeof db.flushQueuedTelemetrySync === 'function') {
+      db.flushQueuedTelemetrySync();
+    }
   } catch (err) {
     logger.error('Ocurrió un error al liberar los recursos de hardware', err, 'SYS');
   }
@@ -121,9 +127,22 @@ function shutdown(exitCode = 0) {
   process.exit(exitCode);
 }
 
+function handleExitSignal(exitCode = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  // Watchdog de seguridad: fuerza la salida si alguna conexión serial o socket se cuelga
+  setTimeout(() => {
+    logger.warn('Tiempo límite de apagado alcanzado (4s). Forzando terminación del proceso.', 'SYS');
+    process.exit(exitCode);
+  }, 4000).unref();
+
+  shutdown(exitCode);
+}
+
 // Bind OS exit signals for graceful termination
-process.on('SIGINT', () => shutdown(0));
-process.on('SIGTERM', () => shutdown(0));
+process.on('SIGINT', () => handleExitSignal(0));
+process.on('SIGTERM', () => handleExitSignal(0));
 
 // Catch unhandled promises and exceptions
 process.on('unhandledRejection', (reason, promise) => {
@@ -132,7 +151,7 @@ process.on('unhandledRejection', (reason, promise) => {
 
 process.on('uncaughtException', (error) => {
   logger.error('¡Ocurrió una excepción no controlada!', error, 'SYS');
-  shutdown(1);
+  handleExitSignal(1);
 });
 
 // Launch Gateway

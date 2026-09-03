@@ -101,7 +101,7 @@ export class GpioRelay {
     }
   }
 
-  write(value) {
+  async write(value) {
     this.hasBeenWritten = true;
     
     // Normalize logical ON/OFF: 0 = ON, 1 = OFF (or boolean true = ON, false = OFF)
@@ -122,33 +122,29 @@ export class GpioRelay {
       } else {
         logger.hw(`[SIMULACIÓN ${this.isI2C ? 'I2C MCP23017' : 'GPIO'}] Pin ${this.pin} (McpPin: ${this.mcpPin}) establecido en ${physicalLevel} (${isLogicalOn ? 'ENCENDIDO' : 'APAGADO'})`, 'HW');
       }
-      return;
+      return true;
     }
 
     if (this.isModbus) {
       const isRTU = this.deviceId && (this.deviceId.startsWith('/dev/') || this.deviceId.includes('tty') || this.deviceId.includes('COM'));
       const isTCP = this.deviceId && (this.deviceId.includes('.') || this.deviceId.startsWith('192.'));
 
-      if (isRTU) {
-        import('./modbus_honeywell.js').then(({ getModbusRTUClient }) => {
+      try {
+        if (isRTU) {
+          const { getModbusRTUClient } = await import('./modbus_honeywell.js');
           const client = getModbusRTUClient(this.deviceId);
-          client.writeSystemMode(isLogicalOn).catch(err => {
-            logger.error(`[Error Modbus RTU] Fallo al escribir el modo de sistema en ${this.deviceId}`, err, 'HW');
-          });
-        }).catch(err => {
-          logger.error('Fallo al cargar el módulo Modbus RTU', err, 'HW');
-        });
-      } else if (isTCP) {
-        import('./modbus_honeywell.js').then(({ getModbusTCPClient }) => {
+          return await client.writeSystemMode(isLogicalOn);
+        } else if (isTCP) {
+          const { getModbusTCPClient } = await import('./modbus_honeywell.js');
           const client = getModbusTCPClient(this.deviceId);
-          client.writeSystemMode(isLogicalOn).catch(err => {
-            logger.error(`[Error Modbus TCP] Fallo al escribir el modo de sistema en ${this.deviceId}`, err, 'HW');
-          });
-        }).catch(err => {
-          logger.error('Fallo al cargar el módulo Modbus TCP', err, 'HW');
-        });
-      } else {
-        logger.warn(`[Advertencia Modbus] Cadena de conexión Modbus no válida: ${this.deviceId}`, 'HW');
+          return await client.writeSystemMode(isLogicalOn);
+        } else {
+          logger.warn(`[Advertencia Modbus] Cadena de conexión Modbus no válida: ${this.deviceId}`, 'HW');
+          return false;
+        }
+      } catch (err) {
+        logger.error(`[Error Modbus] Fallo al escribir el modo de sistema en ${this.deviceId}`, err, 'HW');
+        return false;
       }
     } else if (this.isI2C && bus) {
       try {
@@ -170,19 +166,24 @@ export class GpioRelay {
         }
 
         bus.writeByteSync(MCP23017_ADDRESS, register, currentState);
+        return true;
       } catch (err) {
         logger.error(`[Error I2C] Fallo al escribir el pin ${this.pin} en el MCP23017`, err, 'HW');
+        return false;
       }
     } else if (this.gpio) {
       try {
         this.gpio.writeSync(physicalLevel);
+        return true;
       } catch (err) {
         logger.error(`[Error GPIO] Fallo al escribir el pin ${this.pin} con onoff (${err.message}). Recurriendo a controladores CLI...`, null, 'HW');
         this.gpio = null;
         this.writeCli(physicalLevel);
+        return true;
       }
     } else {
       this.writeCli(physicalLevel);
+      return true;
     }
   }
 
@@ -252,9 +253,9 @@ export class GpioRelay {
     logger.error(`[Error GPIO] No se pudo escribir en el pin ${this.pin} (onoff y herramientas CLI fallaron)`, null, 'HW');
   }
 
-  release() {
+  async release() {
     try {
-      this.write(1); // Ensure relay is safely turned OFF before releasing pin
+      await this.write(1); // Ensure relay is safely turned OFF before releasing pin
     } catch { }
     if (!isMockHardware && !this.isI2C && !this.isModbus && this.gpio) {
       try {
@@ -269,11 +270,11 @@ export class GpioRelay {
 /**
  * Safely releases all active relays and selector pins across the system.
  */
-export function releaseAll() {
+export async function releaseAll() {
   releaseSelectorPins();
   for (const [key, relay] of activeRelayRegistry.entries()) {
     try {
-      relay.release();
+      await relay.release();
     } catch (err) {
       logger.error(`Error al liberar relevador ${key}:`, err, 'HW');
     }
@@ -344,8 +345,8 @@ function getMedian(arr) {
 }
 
 const tempCache = {};
-const CACHE_TTL_MS = 5000;
-const FAILED_CACHE_TTL_MS = 15000;
+const CACHE_TTL_MS = 15000;
+const FAILED_CACHE_TTL_MS = 20000;
 
 /**
  * Reads temperature from CPU, 1-wire DS18B20, or Modbus.
@@ -419,8 +420,8 @@ export async function getTemperature(sensorId) {
     return response;
   }
 
-  const NUMBER_OF_SAMPLES = config.ONEWIRE_SAMPLES || 3;
-  const SAMPLE_DELAY_MS = config.ONEWIRE_SAMPLE_DELAY_MS || 250;
+  const NUMBER_OF_SAMPLES = config.ONEWIRE_SAMPLES || 1;
+  const SAMPLE_DELAY_MS = config.ONEWIRE_SAMPLE_DELAY_MS || 100;
   const NUMBER_OF_ATTEMPTS = config.ONEWIRE_MAX_ATTEMPTS || 2;
 
   let lastStatus = 'UNKNOWN';

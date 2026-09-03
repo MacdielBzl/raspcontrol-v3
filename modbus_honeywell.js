@@ -32,31 +32,23 @@ export const REGISTERS = {
   RELAY_STATUS: 0x0070     // Estado físico de relevadores (Modbus Coil o Holding Register)
 };
 
-// Mutex para sincronizar acceso concurrente al bus serial RS-485
-const portLocks = new Map();
+// Cola de promesas secuenciales (FIFO) para sincronizar acceso concurrente al bus serial RS-485
+const portQueues = new Map();
 
-export async function withSerialLock(portPath, taskFn) {
+export function withSerialLock(portPath, taskFn) {
   const key = portPath || 'default';
-  while (portLocks.has(key)) {
-    try {
-      await portLocks.get(key);
-    } catch {}
-  }
-  
-  let release;
-  const lockPromise = new Promise((resolve) => {
-    release = resolve;
-  });
-  portLocks.set(key, lockPromise);
+  const previousPromise = portQueues.get(key) || Promise.resolve();
 
-  try {
+  const currentPromise = (async () => {
+    try {
+      await previousPromise;
+    } catch {}
     return await taskFn();
-  } finally {
-    if (portLocks.get(key) === lockPromise) {
-      portLocks.delete(key);
-    }
-    release();
-  }
+  })();
+
+  // Encadenar la finalización para el siguiente llamador
+  portQueues.set(key, currentPromise.catch(() => {}));
+  return currentPromise;
 }
 
 /**
@@ -181,6 +173,31 @@ export class HoneywellModbusTCPClient {
     } catch (err) {
       this.cleanup(); // Liberar socket dañado
       logger.error(`[Error Modbus TCP] Fallo al escribir el modo de sistema en ${this.host}:`, err.message, 'HW');
+      return false;
+    }
+  }
+
+  async writeSetpoint(tempCelsius) {
+    const rawVal = Math.round(Number(tempCelsius) * 10);
+    if (isNaN(rawVal)) return false;
+
+    if (!isModbusAvailable || process.platform === 'win32') {
+      logger.hw(`[SIMULACIÓN Modbus TCP] Escribiendo Setpoint a ${tempCelsius}°C (${rawVal}) en ${this.host}`, 'HW');
+      return true;
+    }
+
+    try {
+      await this.connect();
+      const writePromise = this.client.writeSingleRegister(REGISTERS.COOL_SETPOINT, rawVal);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout de escritura de setpoint Modbus TCP')), 3000)
+      );
+
+      await Promise.race([writePromise, timeoutPromise]);
+      return true;
+    } catch (err) {
+      this.cleanup();
+      logger.error(`[Error Modbus TCP] Fallo al escribir setpoint en ${this.host}:`, err.message, 'HW');
       return false;
     }
   }
@@ -320,6 +337,33 @@ export class HoneywellModbusRTUClient {
       } catch (err) {
         this.cleanup(); // Liberar puerto serie dañado
         logger.error(`[Error Modbus RTU] Fallo al escribir el modo de sistema en ${this.path}:`, err.message, 'HW');
+        return false;
+      }
+    });
+  }
+
+  async writeSetpoint(tempCelsius) {
+    const rawVal = Math.round(Number(tempCelsius) * 10);
+    if (isNaN(rawVal)) return false;
+
+    if (!isModbusAvailable || process.platform === 'win32') {
+      logger.hw(`[SIMULACIÓN Modbus RTU] Escribiendo Setpoint a ${tempCelsius}°C (${rawVal}) en ${this.path} (Esclavo ${this.slaveId})`, 'HW');
+      return true;
+    }
+
+    return await withSerialLock(this.path, async () => {
+      try {
+        await this.connect();
+        const writePromise = this.client.writeSingleRegister(REGISTERS.COOL_SETPOINT, rawVal);
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout de escritura de setpoint Modbus RTU')), 3000)
+        );
+
+        await Promise.race([writePromise, timeoutPromise]);
+        return true;
+      } catch (err) {
+        this.cleanup();
+        logger.error(`[Error Modbus RTU] Fallo al escribir setpoint en ${this.path}:`, err.message, 'HW');
         return false;
       }
     });

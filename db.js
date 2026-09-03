@@ -29,6 +29,21 @@ function scheduleLogFlush() {
   }, LOG_FLUSH_INTERVAL_MS);
 }
 
+// In-memory buffer for offline telemetry saves to prevent continuous SD card writes
+let telemetrySaveTimer = null;
+const TELEMETRY_FLUSH_INTERVAL_MS = 60000; // Batch save to disk every 60s
+const MAX_UNSAVED_TELEMETRY = 20;
+let unsavedTelemetryCount = 0;
+
+function scheduleTelemetrySave() {
+  if (telemetrySaveTimer) return;
+  telemetrySaveTimer = setTimeout(() => {
+    telemetrySaveTimer = null;
+    unsavedTelemetryCount = 0;
+    db.save();
+  }, TELEMETRY_FLUSH_INTERVAL_MS);
+}
+
 export const db = {
   /**
    * Initializes the JSON database, loading it from disk if it exists.
@@ -103,12 +118,12 @@ export const db = {
       if (!stillExists) {
         const msg = `Dispositivo ${oldDev.name} (${oldDev.id}) desvinculado o eliminado del manifiesto. Apagando relevadores...`;
         logger.warn(msg, 'DB');
-        db.writeDeviceLog(oldDev.id, msg);
+        const activeLow = oldDev.active_high ? false : (oldDev.active_low !== false);
         if (oldDev.pin != null) {
           const pinStillInUse = newDevices.some(d => d.pin === oldDev.pin || d.compressorPin === oldDev.pin);
           if (!pinStillInUse) {
             try {
-              const relay = new hardware.GpioRelay(oldDev.pin, oldDev.device_id);
+              const relay = new hardware.GpioRelay(oldDev.pin, oldDev.device_id, activeLow);
               relay.write(1); // 1 = APAGADO
               relay.release();
             } catch (e) {
@@ -122,7 +137,7 @@ export const db = {
           const compPinStillInUse = newDevices.some(d => d.pin === oldDev.compressorPin || d.compressorPin === oldDev.compressorPin);
           if (!compPinStillInUse) {
             try {
-              const compRelay = new hardware.GpioRelay(oldDev.compressorPin, oldDev.device_id);
+              const compRelay = new hardware.GpioRelay(oldDev.compressorPin, oldDev.device_id, activeLow);
               compRelay.write(1); // 1 = APAGADO
               compRelay.release();
             } catch (e) {
@@ -270,7 +285,7 @@ export const db = {
   },
 
   /**
-   * Appends telemetry records to the offline queue with length cap.
+   * Appends telemetry records to the offline queue with batch disk saving.
    */
   queueTelemetry: (telemetryRecord) => {
     const MAX_OFFLINE_TELEMETRY = 500;
@@ -284,8 +299,31 @@ export const db = {
       ...telemetryRecord,
       queuedAt: new Date().toISOString()
     });
-    db.save();
+
+    unsavedTelemetryCount++;
+    if (unsavedTelemetryCount >= MAX_UNSAVED_TELEMETRY) {
+      if (telemetrySaveTimer) {
+        clearTimeout(telemetrySaveTimer);
+        telemetrySaveTimer = null;
+      }
+      unsavedTelemetryCount = 0;
+      db.save();
+    } else {
+      scheduleTelemetrySave();
+    }
     logger.warn(`Modo fuera de línea: telemetría en cola. Total en cola: ${dataStore.offlineTelemetry.length}`, 'DB');
+  },
+
+  /**
+   * Immediately flushes any unsaved offline telemetry queue to disk.
+   */
+  flushQueuedTelemetrySync: () => {
+    if (telemetrySaveTimer) {
+      clearTimeout(telemetrySaveTimer);
+      telemetrySaveTimer = null;
+    }
+    unsavedTelemetryCount = 0;
+    db.save();
   },
 
   /**
@@ -304,6 +342,11 @@ export const db = {
     } else {
       dataStore.offlineTelemetry = dataStore.offlineTelemetry.slice(count);
     }
+    if (telemetrySaveTimer) {
+      clearTimeout(telemetrySaveTimer);
+      telemetrySaveTimer = null;
+    }
+    unsavedTelemetryCount = 0;
     db.save();
     logger.info(`Cola de telemetría limpiada. Restantes: ${dataStore.offlineTelemetry.length}`, 'DB');
   },

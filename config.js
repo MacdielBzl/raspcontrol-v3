@@ -41,10 +41,10 @@ const config = {
   ENERGY_INTERVAL_MS: parseInt(process.env.ENERGY_INTERVAL_MS, 10) || 60000, // 60 seconds (1 minute)
   MANIFEST_SYNC_INTERVAL_MS: parseInt(process.env.MANIFEST_SYNC_INTERVAL_MS, 10) || 300000, // 5 minutes (300 seconds)
 
-  // OneWire Sensors Settings
-  ONEWIRE_SAMPLES: parseInt(process.env.ONEWIRE_SAMPLES, 10) || 5,
-  ONEWIRE_SAMPLE_DELAY_MS: parseInt(process.env.ONEWIRE_SAMPLE_DELAY_MS, 10) || 1000,
-  ONEWIRE_MAX_ATTEMPTS: parseInt(process.env.ONEWIRE_MAX_ATTEMPTS, 10) || 3
+  // OneWire Sensors Settings (Optimizado a 1 muestra rápida con CRC y reintento)
+  ONEWIRE_SAMPLES: parseInt(process.env.ONEWIRE_SAMPLES, 10) || 1,
+  ONEWIRE_SAMPLE_DELAY_MS: parseInt(process.env.ONEWIRE_SAMPLE_DELAY_MS, 10) || 100,
+  ONEWIRE_MAX_ATTEMPTS: parseInt(process.env.ONEWIRE_MAX_ATTEMPTS, 10) || 2
 };
 
 export default config;

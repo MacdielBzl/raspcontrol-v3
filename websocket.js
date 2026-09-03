@@ -13,6 +13,7 @@ let heartbeatTimeout = null;
 let connectTimeout = null;
 let commandCallback = null;
 let reconnectTimer = null;
+let isFlushingTelemetry = false;
 
 const HEARTBEAT_INTERVAL_MS = 25000;
 const HEARTBEAT_ACK_TIMEOUT_MS = 12000;
@@ -259,6 +260,11 @@ export const wsClient = {
     
     heartbeatInterval = setInterval(() => {
       if (wsClient.isConnected()) {
+        try {
+          if (ws && typeof ws.ping === 'function') {
+            ws.ping();
+          }
+        } catch {}
         const pingSent = wsClient.send('ping', { timestamp: new Date().toISOString() });
         if (pingSent) {
           if (heartbeatTimeout) clearTimeout(heartbeatTimeout);
@@ -323,32 +329,44 @@ export const wsClient = {
   },
 
   /**
-   * Flushes any queued offline telemetry records to the server with rate-limiting.
+   * Flushes any queued offline telemetry records to the server with rate-limiting and race protection.
    */
   flushOfflineTelemetry: async () => {
-    const queued = db.getQueuedTelemetry();
-    if (queued.length === 0) return;
-
-    logger.sync(`Transmitiendo ${queued.length} registros de telemetría fuera de línea en cola...`, 'NET');
-    
-    let sentCount = 0;
-    for (const record of queued) {
-      if (!wsClient.isConnected() || !registered) break;
-      
-      const eventType = record.event === 'energy_telemetry' ? 'energy_telemetry' : 'telemetry_offline';
-      
-      const success = wsClient.send(eventType, record);
-      if (success) {
-        sentCount++;
-        await new Promise(resolve => setTimeout(resolve, 50));
-      } else {
-        break;
-      }
+    if (isFlushingTelemetry) {
+      logger.debug('Vaciado de telemetría fuera de línea ya en progreso. Omitiendo llamada concurrente.', 'NET');
+      return;
     }
 
-    if (sentCount > 0) {
-      db.clearQueuedTelemetry(sentCount);
-      logger.success(`Se transmitieron con éxito ${sentCount} registros fuera de línea.`, 'NET');
+    isFlushingTelemetry = true;
+    try {
+      const queued = db.getQueuedTelemetry();
+      if (queued.length === 0) return;
+
+      logger.sync(`Transmitiendo ${queued.length} registros de telemetría fuera de línea en cola...`, 'NET');
+      
+      let sentCount = 0;
+      for (const record of queued) {
+        if (!wsClient.isConnected() || !registered) break;
+        
+        const eventType = record.event === 'energy_telemetry' ? 'energy_telemetry' : 'telemetry_offline';
+        
+        const success = wsClient.send(eventType, record);
+        if (success) {
+          sentCount++;
+          await new Promise(resolve => setTimeout(resolve, 50));
+        } else {
+          break;
+        }
+      }
+
+      if (sentCount > 0) {
+        db.clearQueuedTelemetry(sentCount);
+        logger.success(`Se transmitieron con éxito ${sentCount} registros fuera de línea.`, 'NET');
+      }
+    } catch (err) {
+      logger.error('Error durante el vaciado de telemetría fuera de línea:', err, 'NET');
+    } finally {
+      isFlushingTelemetry = false;
     }
   },
 

@@ -141,9 +141,37 @@ export const PROFILES = {
 /**
  * Reads a single device's Modbus registers and decodes them with timeout protection.
  */
-async function readDeviceModbus(client, profile, slaveId) {
+async function readDeviceModbus(client, profile, slaveId, serialport = null) {
   const data = {};
   
+  if (!profile.registers || profile.registers.length === 0) return data;
+
+  // Sonda rápida preliminar: verificar que el esclavo responde antes de iterar todo el perfil.
+  // Evita retener el candado del bus por más de 100 segundos si un medidor está apagado.
+  const probeItem = profile.registers[0];
+  try {
+    const probePromise = profile.readMethod === 'holding'
+      ? client.readHoldingRegisters(probeItem.address, probeItem.count)
+      : client.readInputRegisters(probeItem.address, probeItem.count);
+    const probeTimeout = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout en sonda rápida preliminar')), 900)
+    );
+    const probeRes = await Promise.race([probePromise, probeTimeout]);
+    if (!probeRes || !probeRes.response) {
+      logger.warn(`[Fast-Fail] Esclavo ${slaveId} no devolvió respuesta válida en sonda preliminar. Omitiendo perfil completo.`, 'ENERGY');
+      if (serialport && typeof serialport.flush === 'function') {
+        try { serialport.flush(); } catch {}
+      }
+      return null;
+    }
+  } catch (probeErr) {
+    logger.warn(`[Fast-Fail] Medidor esclavo ${slaveId} no responde al sondeo inicial (${probeErr.message}). Omitiendo lectura para evitar bloqueo del bus RS-485.`, 'ENERGY');
+    if (serialport && typeof serialport.flush === 'function') {
+      try { serialport.flush(); } catch {}
+    }
+    return null;
+  }
+
   for (const item of profile.registers) {
     // Brief sleep to avoid overloading RS485 bus
     await new Promise(resolve => setTimeout(resolve, 50));
@@ -273,23 +301,28 @@ export async function readAllMeters(devices) {
     return results;
   }
   
-  // Real Modbus RTU execution with port discovery
-  let ports = [];
-  try {
-    ports = fs.readdirSync('/dev')
-      .filter(file => file.startsWith('ttyUSB') || file.startsWith('ttyACM'))
-      .map(file => `/dev/${file}`)
-      .sort();
-  } catch (err) {
-    logger.warn(`Error al leer el directorio /dev: ${err.message}`, 'ENERGY');
-  }
-  
-  if (ports.length === 0) {
-    logger.warn('No se encontraron puertos seriales (/dev/ttyUSB* o /dev/ttyACM*).', 'ENERGY');
-    return [];
-  }
+  // Real Modbus RTU execution with port discovery and explicit configuration precedence
+  const configuredPort = process.env.ENERGY_SERIAL_PORT || energyDevices.find(d => d.config?.serialPort || d.config?.port)?.config?.serialPort;
+  let primaryPort = configuredPort;
 
-  const primaryPort = ports[0];
+  if (!primaryPort) {
+    let ports = [];
+    try {
+      ports = fs.readdirSync('/dev')
+        .filter(file => file.startsWith('ttyUSB') || file.startsWith('ttyACM'))
+        .map(file => `/dev/${file}`)
+        .sort();
+    } catch (err) {
+      logger.warn(`Error al leer el directorio /dev: ${err.message}`, 'ENERGY');
+    }
+    
+    if (ports.length === 0) {
+      logger.warn('No se encontraron puertos seriales (/dev/ttyUSB* o /dev/ttyACM*).', 'ENERGY');
+      return [];
+    }
+
+    primaryPort = ports[0];
+  }
 
   return await withSerialLock(primaryPort, async () => {
     let serialport = null;
@@ -334,7 +367,7 @@ export async function readAllMeters(devices) {
         client.setID(slaveId);
         
         try {
-          const readings = await readDeviceModbus(client, profile, slaveId);
+          const readings = await readDeviceModbus(client, profile, slaveId, serialport);
           if (readings && Object.keys(readings).length > 0) {
             results.push({
               deviceId: dev.id,
