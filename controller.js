@@ -132,11 +132,16 @@ export const controller = {
           continue;
         }
 
+        // Sistema de 2 Relevadores: HVAC unificado o Conmutador de Transferencia (Selector + Marcha)
+        const isTransferSwitch = dev.isTransferSwitch || (dev.compressorPin != null && dev.type !== 'hvac');
+
         // Encontrar calendarios activos para este dispositivo
         const schedules = db.getSchedulesForDevice(dev.id);
         const activeSch = schedules.find(isScheduleActive);
         
         let desiredOn = false;
+        let isLockout = false;
+        let shouldSoftTrip = false;
         let activeSetpoint = dev.setpoint != null && !isNaN(Number(dev.setpoint)) ? Number(dev.setpoint) : null;
         
         // Verificación de anulación manual
@@ -168,6 +173,22 @@ export const controller = {
           }
           desiredOn = activeSch.action?.on !== false;
           logger.debug(`Calendario activo aplicado para ${dev.name}: estado deseado ${desiredOn ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
+
+          if (!desiredOn && isTransferSwitch) {
+            isLockout = Boolean(activeSch.action?.lockout === true || activeSch.action?.offMode === 'lockout');
+            if (!isLockout) {
+              const currentWindowKey = `${activeSch.startTime || '0'}_${activeSch.endTime || '0'}`;
+              if (currentState.lastSoftTripKey !== currentWindowKey) {
+                shouldSoftTrip = true;
+                db.saveDeviceState(dev.id, { lastSoftTripKey: currentWindowKey });
+              }
+            }
+          }
+        }
+
+        // Restablecer la llave de soft trip cuando no hay calendario activo o el calendario es de encendido
+        if (isTransferSwitch && (desiredOn || !activeSch) && currentState.lastSoftTripKey) {
+          db.saveDeviceState(dev.id, { lastSoftTripKey: null });
         }
 
         // Registrar cambios de setpoint dinámicamente si cambia el setpoint activo
@@ -179,13 +200,16 @@ export const controller = {
           db.saveDeviceState(dev.id, { lastActiveSetpoint: activeSetpoint });
         }
 
-        // Sistema de 2 Relevadores: HVAC unificado o Conmutador de Transferencia (Selector + Marcha)
-        const isTransferSwitch = dev.isTransferSwitch || (dev.compressorPin != null && dev.type !== 'hvac');
         if (dev.type === 'hvac' || dev.compressorPin != null) {
           let targetPin1 = false; // Ventilador (HVAC) o Selector Local/Remoto (Transfer Switch)
           let targetPin2 = false; // Compresor (HVAC) o Señal de Marcha (Transfer Switch)
 
-          if (desiredOn) {
+          if (isTransferSwitch && isLockout) {
+            // Modo Secuestro Remoto Total (Lockout): Selector a Remoto (NC abierto / Botonera bloqueada) y Marcha apagada
+            targetPin1 = true;
+            targetPin2 = false;
+            logger.info(`[Conmutador Transferencia] ${dev.name}: Modo SECUESTRO REMOTO TOTAL (Lockout) activo. Botonera física inhibida.`, 'CTRL');
+          } else if (desiredOn) {
             targetPin1 = true; // Selector a Modo Remoto (o Ventilador encendido)
 
             if (dev.tempId && activeSetpoint !== null) {
@@ -221,7 +245,8 @@ export const controller = {
 
           targetStates[dev.id] = {
             fan: targetPin1,
-            compressor: targetPin2
+            compressor: targetPin2,
+            shouldSoftTrip: Boolean(shouldSoftTrip)
           };
 
         } else {
@@ -375,8 +400,17 @@ export const controller = {
               }
             }
 
-            // 2. Apagar Relevador 1 (Selector / Ventilador)
-            if (dev.pin != null && (target.fan !== currentState.on || !relay1.hasBeenWritten)) {
+            // 2. Si se solicitó un pulso de desconexión activa (Soft Trip) para romper la retención de un contactor encendido en local
+            if (isTransferSwitch && target.shouldSoftTrip && dev.pin != null) {
+              logger.info(`[Conmutador Transferencia] Emitiendo pulso de desconexión activa (Soft Trip) en ${dev.name} (Pin ${dev.pin}) para botar retención local...`, 'CTRL');
+              db.writeDeviceLog(dev.id, `Pulso de desconexión activa (Soft Trip) emitido en Pin ${dev.pin} para botar retención local.`);
+              relay1.write(0); // Energizar selector (abre contacto NC y tumba la bobina del contactor)
+              await new Promise(resolve => setTimeout(resolve, 2000));
+              relay1.write(1); // Regresar selector a NC
+              logger.info(`[Conmutador Transferencia] Selector regresó a NC en ${dev.name}. Botonera física local habilitada para rearme manual.`, 'CTRL');
+              db.saveDeviceState(dev.id, { on: false });
+            } else if (dev.pin != null && (target.fan !== currentState.on || !relay1.hasBeenWritten)) {
+              // 3. Apagar Relevador 1 (Selector / Ventilador) a NC
               logger.info(`Cambiando ${namePin1} de ${dev.name} (Pin ${dev.pin}) a APAGADO (Retorno a NC / Local)`, 'CTRL');
               db.writeDeviceLog(dev.id, `${namePin1} cambiado a APAGADO (Pin ${dev.pin})`);
               relay1.write(1);
@@ -384,7 +418,7 @@ export const controller = {
             }
 
           } else {
-            // Al ENCENDER (o mantener encendido):
+            // Al ENCENDER (o mantener encendido / secuestro remoto):
             // 1. Encender Relevador 1 (Selector a Remoto / Ventilador)
             if (dev.pin != null && (target.fan !== currentState.on || !relay1.hasBeenWritten)) {
               logger.info(`Cambiando ${namePin1} de ${dev.name} (Pin ${dev.pin}) a ${target.fan ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
@@ -392,7 +426,7 @@ export const controller = {
               relay1.write(target.fan ? 0 : 1);
               db.saveDeviceState(dev.id, { on: target.fan });
 
-              if (target.fan) {
+              if (target.fan && target.compressor) {
                 const powerOnWait = Number(dev.power_on_wait || (isTransferSwitch ? 2 : 0));
                 if (powerOnWait > 0) {
                   logger.info(`[Retraso de Conmutación] Esperando ${powerOnWait}s para estabilización antes de activar ${namePin2} en ${dev.name}...`, 'CTRL');
@@ -401,7 +435,7 @@ export const controller = {
               }
             }
 
-            // 2. Encender Relevador 2 (Marcha / Compresor)
+            // 2. Encender/Apagar Relevador 2 (Marcha / Compresor)
             if (dev.compressorPin != null && (target.compressor !== currentState.compressorOn || !relay2.hasBeenWritten)) {
               logger.info(`Cambiando ${namePin2} de ${dev.name} (Pin ${dev.compressorPin}) a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'}`, 'CTRL');
               db.writeDeviceLog(dev.id, `${namePin2} cambiado a ${target.compressor ? 'ENCENDIDO' : 'APAGADO'} (Pin ${dev.compressorPin})`);
