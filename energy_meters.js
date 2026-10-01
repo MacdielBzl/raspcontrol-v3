@@ -326,7 +326,6 @@ export async function readAllMeters(devices) {
 
   return await withSerialLock(primaryPort, async () => {
     let serialport = null;
-    let client = null;
 
     try {
       logger.info(`Conectando puerto serial Modbus bajo bloqueo: ${primaryPort}...`, 'ENERGY');
@@ -356,7 +355,6 @@ export async function readAllMeters(devices) {
       }
 
       const RTUClient = Modbus.client?.RTU || Modbus.default?.client?.RTU || Modbus.client;
-      client = new RTUClient(serialport, 1);
 
       for (const dev of energyDevices) {
         const profileName = dev.config?.model || dev.config?.meterModel || 'UPM309';
@@ -364,9 +362,16 @@ export async function readAllMeters(devices) {
         const slaveId = dev.config?.slaveId || dev.config?.unit || dev.config?.address || 1;
         
         logger.info(`Leyendo medidor ${dev.name} (Modelo: ${profileName}, Esclavo: ${slaveId})...`, 'ENERGY');
-        client.setID(slaveId);
+        // jsmodbus fixes the RTU address in the constructor (no setID API).
+        // Keep only this meter's client attached while reading the shared bus.
+        const previousListeners = new Map(serialport.eventNames().map(event =>
+          [event, serialport.rawListeners(event)]
+        ));
         
         try {
+          // Expire requests before the 900ms probe deadline so a timed-out
+          // client cannot keep queued requests active on the next slave.
+          const client = new RTUClient(serialport, Number(slaveId), 800);
           const readings = await readDeviceModbus(client, profile, slaveId, serialport);
           if (readings && Object.keys(readings).length > 0) {
             results.push({
@@ -381,6 +386,13 @@ export async function readAllMeters(devices) {
           }
         } catch (devErr) {
           logger.error(`Error leyendo dispositivo ${dev.name}:`, devErr, 'ENERGY');
+        } finally {
+          for (const event of serialport.eventNames()) {
+            const retained = previousListeners.get(event) || [];
+            for (const listener of serialport.rawListeners(event)) {
+              if (!retained.includes(listener)) serialport.removeListener(event, listener);
+            }
+          }
         }
       }
     } catch (err) {
